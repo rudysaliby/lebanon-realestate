@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Fetch area stats to compute valuation
-  const areas = [...new Set((data || []).map((r: any) => r.area).filter(Boolean))]
+  const areas = Array.from(new Set((data || []).map((r: any) => r.area).filter(Boolean)))
   let statsMap: Record<string, number> = {}
 
   if (areas.length > 0) {
