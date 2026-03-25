@@ -18,6 +18,7 @@ class RawListing:
     external_id: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
+    image_url: Optional[str] = None
 
 class BaseScraper:
     SOURCE = ""

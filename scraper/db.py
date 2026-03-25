@@ -33,6 +33,7 @@ async def upsert_listings(listings: list[RawListing]) -> int:
             "external_id":   l.external_id,
             "lat":           l.lat,
             "lng":           l.lng,
+            "image_url":     l.image_url,
             "is_active":     True,
         }
         # Remove None values to avoid overwriting existing data

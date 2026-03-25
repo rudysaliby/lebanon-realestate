@@ -1,7 +1,7 @@
 import asyncio
 import os
 from scrapers.olx import OLXScraper
-from scrapers.propertyfinder import PropertyFinderScraper
+from scrapers.realestateLB import RealEstateLBScraper
 from geocoding import geocode_location
 from db import upsert_listings
 
@@ -10,7 +10,7 @@ async def run():
     print("Lebanon Real Estate Scraper - Starting")
     print("=" * 50)
 
-    scrapers = [OLXScraper(), PropertyFinderScraper()]
+    scrapers = [OLXScraper(), RealEstateLBScraper()]
     all_listings = []
 
     for scraper in scrapers:

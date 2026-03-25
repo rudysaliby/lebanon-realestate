@@ -16,6 +16,6 @@ export async function GET() {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-const areas = Array.from(new Set((data || []).map((r: any) => r.area))).sort()
+  const areas = Array.from(new Set((data || []).map((r: any) => r.area))).sort()
   return NextResponse.json({ areas })
 }

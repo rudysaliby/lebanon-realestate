@@ -2,33 +2,23 @@
 import { useEffect, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { Listing } from '@/lib/supabase'
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
-function getPinColor(props: any): string {
-  if (!props.price || !props.area) return '#6b7280'
-  return '#22c55e'
-}
-
 export default function MapView({ geojson, onSelect, selected }: {
-  geojson: any
-  onSelect: (l: Listing) => void
-  selected: Listing | null
+  geojson: any; onSelect: (l: any) => void; selected: any
 }) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
 
   useEffect(() => {
     if (map.current || !mapContainer.current) return
-
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [35.5018, 33.8938],
       zoom: 9,
     })
-
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right')
 
     map.current.on('load', () => {
@@ -40,7 +30,7 @@ export default function MapView({ geojson, onSelect, selected }: {
         clusterRadius: 40,
       })
 
-      // Cluster circles
+      // Clusters
       map.current!.addLayer({
         id: 'clusters',
         type: 'circle',
@@ -54,22 +44,16 @@ export default function MapView({ geojson, onSelect, selected }: {
           'circle-stroke-color': '#22c55e',
         },
       })
-
-      // Cluster count labels
       map.current!.addLayer({
         id: 'cluster-count',
         type: 'symbol',
         source: 'listings',
         filter: ['has', 'point_count'],
-        layout: {
-          'text-field': '{point_count_abbreviated}',
-          'text-size': 12,
-          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-        },
+        layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12, 'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'] },
         paint: { 'text-color': '#fff' },
       })
 
-      // Individual pins
+      // Individual pins — colored by valuation
       map.current!.addLayer({
         id: 'unclustered-point',
         type: 'circle',
@@ -78,7 +62,9 @@ export default function MapView({ geojson, onSelect, selected }: {
         paint: {
           'circle-color': [
             'case',
-            ['!=', ['get', 'price'], null], '#22c55e',
+            ['==', ['get', 'valuation'], 'undervalued'], '#4ade80',
+            ['==', ['get', 'valuation'], 'overvalued'],  '#f87171',
+            ['==', ['get', 'valuation'], 'fair'],         '#818cf8',
             '#6b7280'
           ],
           'circle-radius': 7,
@@ -88,42 +74,27 @@ export default function MapView({ geojson, onSelect, selected }: {
         },
       })
 
-      // Click cluster → zoom in
       map.current!.on('click', 'clusters', (e) => {
         const features = map.current!.queryRenderedFeatures(e.point, { layers: ['clusters'] })
         const clusterId = features[0].properties!.cluster_id
         const source = map.current!.getSource('listings') as mapboxgl.GeoJSONSource
         source.getClusterExpansionZoom(clusterId, (err, zoom) => {
           if (err) return
-          map.current!.easeTo({
-            center: (features[0].geometry as any).coordinates,
-            zoom: zoom!,
-          })
+          map.current!.easeTo({ center: (features[0].geometry as any).coordinates, zoom: zoom! })
         })
       })
 
-      // Click pin → show listing
       map.current!.on('click', 'unclustered-point', (e) => {
-        const props = e.features![0].properties!
-        onSelect(props as unknown as Listing)
+        onSelect(e.features![0].properties)
       })
 
-      map.current!.on('mouseenter', 'clusters', () => {
-        map.current!.getCanvas().style.cursor = 'pointer'
-      })
-      map.current!.on('mouseleave', 'clusters', () => {
-        map.current!.getCanvas().style.cursor = ''
-      })
-      map.current!.on('mouseenter', 'unclustered-point', () => {
-        map.current!.getCanvas().style.cursor = 'pointer'
-      })
-      map.current!.on('mouseleave', 'unclustered-point', () => {
-        map.current!.getCanvas().style.cursor = ''
-      })
+      for (const layer of ['clusters', 'unclustered-point']) {
+        map.current!.on('mouseenter', layer, () => { map.current!.getCanvas().style.cursor = 'pointer' })
+        map.current!.on('mouseleave', layer, () => { map.current!.getCanvas().style.cursor = '' })
+      }
     })
   }, [])
 
-  // Update map data when listings change
   useEffect(() => {
     if (!map.current || !geojson) return
     const update = () => {
@@ -134,10 +105,5 @@ export default function MapView({ geojson, onSelect, selected }: {
     else map.current.on('load', update)
   }, [geojson])
 
-  return (
-    <div
-      ref={mapContainer}
-      style={{ width: '100%', height: '100%' }}
-    />
-  )
+  return <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
 }

@@ -1,2 +1,19 @@
-.env 
-.env.local 
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.playwright/
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# Build
+.next/
+dist/
+build/
+
+# Misc
+.DS_Store
+*.log
