@@ -61,6 +61,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json(
     { type: 'FeatureCollection', features },
-    { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate' } }
+    { headers: { 'Cache-Control': 'no-store' } }
   )
 }
