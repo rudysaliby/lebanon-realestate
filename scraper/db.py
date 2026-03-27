@@ -11,25 +11,17 @@ HEADERS = {
     "Prefer": "resolution=merge-duplicates",
 }
 
-# All possible columns — every row will have all keys
-ALL_COLUMNS = [
-    "source", "url", "title", "description", "price", "currency",
-    "price_period", "property_type", "size_sqm", "location_raw",
-    "area", "city", "lat", "lng", "image_url", "external_id", "is_active"
-]
-
 async def upsert_listings(listings) -> int:
     if not listings:
         return 0
 
     rows = []
     for l in listings:
-        # Build row with ALL columns present — None for missing ones
         row = {
             "source":        l.source,
             "url":           l.url,
             "title":         l.title,
-            "description":   None,
+            "description":   getattr(l, 'description', None),
             "price":         l.price,
             "currency":      getattr(l, 'currency', 'USD'),
             "price_period":  getattr(l, 'price_period', None),
@@ -41,16 +33,22 @@ async def upsert_listings(listings) -> int:
             "lat":           getattr(l, 'lat', None),
             "lng":           getattr(l, 'lng', None),
             "image_url":     getattr(l, 'image_url', None),
-            "external_id":   getattr(l, 'external_id', None),
             "is_active":     True,
+            "ai_verified":   False,
+            "ai_tags_done":  False,
         }
-        rows.append(row)
+        rows.append({k: v for k, v in row.items() if v is not None})
 
     chunk_size = 50
     total = 0
     async with httpx.AsyncClient(timeout=30) as client:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i:i + chunk_size]
+            # Ensure all rows have same keys
+            all_keys = set()
+            for r in chunk: all_keys.update(r.keys())
+            chunk = [{k: r.get(k) for k in all_keys} for r in chunk]
+
             resp = await client.post(
                 f"{SUPABASE_URL}/rest/v1/listings",
                 headers=HEADERS,
