@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   const condition = searchParams.get('condition')
   const bedrooms  = searchParams.get('bedrooms')
   const view      = searchParams.get('view')
-  const limit     = Math.min(parseInt(searchParams.get('limit') || '400'), 500)
+  const limit     = Math.min(parseInt(searchParams.get('limit') || '500'), 500)
 
   let query = supabase
     .from('listings')
@@ -45,28 +45,26 @@ export async function GET(req: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const areaSet: string[] = Array.from(
-    new Set<string>((data || []).map((r: any) => r.area).filter(Boolean))
-  )
+  const rows = data || []
 
-  let statsMap: Record<string, number> = {}
-  if (areaSet.length > 0) {
-    const { data: stats } = await supabase
-      .from('area_stats')
-      .select('area,avg_price_per_sqm')
-      .in('area', areaSet)
-    statsMap = Object.fromEntries(
-      (stats || [])
-        .filter((s: any) => s.avg_price_per_sqm)
-        .map((s: any) => [s.area, Number(s.avg_price_per_sqm)])
-    )
-  }
+  // Compute area average price/sqm inline — no materialized view needed
+  const areaStats: Record<string, number[]> = {}
+  rows.forEach((r: any) => {
+    if (r.area && r.price_per_sqm) {
+      if (!areaStats[r.area]) areaStats[r.area] = []
+      areaStats[r.area].push(Number(r.price_per_sqm))
+    }
+  })
+  const avgMap: Record<string, number> = {}
+  Object.entries(areaStats).forEach(([a, prices]) => {
+    avgMap[a] = Math.round(prices.reduce((s, p) => s + p, 0) / prices.length)
+  })
 
-  const features = (data || []).map((r: any) => {
-    const avgPsqm = statsMap[r.area]
+  const features = rows.map((r: any) => {
+    const avg = avgMap[r.area]
     let valuation = 'unknown'
-    if (r.price_per_sqm && avgPsqm) {
-      const diff = ((r.price_per_sqm - avgPsqm) / avgPsqm) * 100
+    if (r.price_per_sqm && avg) {
+      const diff = ((Number(r.price_per_sqm) - avg) / avg) * 100
       valuation = diff > 15 ? 'overvalued' : diff < -15 ? 'undervalued' : 'fair'
     }
     return {
