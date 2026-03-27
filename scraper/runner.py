@@ -17,7 +17,7 @@ async def run():
     all_listings = []
 
     results = await asyncio.gather(
-        *[s.scrape(max_pages=2) for s in scrapers],
+        *[s.scrape(max_pages=1) for s in scrapers],
         return_exceptions=True
     )
 
