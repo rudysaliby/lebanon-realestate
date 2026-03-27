@@ -36,9 +36,21 @@ async def upsert_listings(listings) -> int:
             "lng":           getattr(l, 'lng', None),
             "image_url":     getattr(l, 'image_url', None),
             "is_active":     True,
-            "ai_verified":   False,
+            "ai_verified":   getattr(l, 'lat', None) is not None,  # verified if we got coords
             "ai_tags_done":  False,
         }
+        # Include pre-scraped tags from realestate.com.lb
+        if getattr(l, '_furnished', None):
+            row["furnished"] = l._furnished
+        if getattr(l, '_bedrooms', None):
+            row["bedrooms"] = l._bedrooms
+        if getattr(l, '_bathrooms', None):
+            row["bathrooms"] = l._bathrooms
+        if getattr(l, '_amenities', None):
+            row["features"] = l._amenities
+        if getattr(l, '_floor', None):
+            row["floor_type"] = l._floor
+
         rows.append({k: v for k, v in row.items() if v is not None})
 
     chunk_size = 50
@@ -46,9 +58,9 @@ async def upsert_listings(listings) -> int:
     async with httpx.AsyncClient(timeout=30) as client:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i:i + chunk_size]
-            # Ensure all rows have same keys
             all_keys = set()
-            for r in chunk: all_keys.update(r.keys())
+            for r in chunk:
+                all_keys.update(r.keys())
             chunk = [{k: r.get(k) for k in all_keys} for r in chunk]
 
             resp = await client.post(
