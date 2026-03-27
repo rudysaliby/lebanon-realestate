@@ -108,7 +108,7 @@ async def run_enrichment():
     print("Starting enrichment (location + tags)")
     print("=" * 50)
 
-    async with httpx.AsyncClient(timeout=25) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
 
         # --- PHASE 1: Location enrichment ---
         unverified = await get_pending(client, "ai_verified")
