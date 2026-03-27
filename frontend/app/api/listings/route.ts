@@ -30,27 +30,36 @@ export async function GET(req: NextRequest) {
 
   if (minPrice)  query = query.gte('price', parseFloat(minPrice))
   if (maxPrice)  query = query.lte('price', parseFloat(maxPrice))
-  if (type && type !== 'all')       query = query.eq('property_type', type)
-  if (area && area !== 'all')       query = query.eq('area', area)
-  if (region && region !== 'all')   query = query.eq('region', region)
+  if (type && type !== 'all')           query = query.eq('property_type', type)
+  if (area && area !== 'all')           query = query.eq('area', area)
+  if (region && region !== 'all')       query = query.eq('region', region)
   if (subregion && subregion !== 'all') query = query.eq('subregion', subregion)
   if (furnished && furnished !== 'all') query = query.eq('furnished', furnished)
   if (condition && condition !== 'all') query = query.eq('condition', condition)
   if (bedrooms && bedrooms !== 'all') {
-    const n = parseInt(bedrooms)
     if (bedrooms === '5+') query = query.gte('bedrooms', 5)
-    else query = query.eq('bedrooms', n)
+    else query = query.eq('bedrooms', parseInt(bedrooms))
   }
   if (view && view !== 'all') query = query.contains('view_type', [view])
 
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const areas = [...new Set((data || []).map((r: any) => r.area).filter(Boolean))]
+  const areaSet: string[] = Array.from(
+    new Set<string>((data || []).map((r: any) => r.area).filter(Boolean))
+  )
+
   let statsMap: Record<string, number> = {}
-  if (areas.length > 0) {
-    const { data: stats } = await supabase.from('area_stats').select('area,avg_price_per_sqm').in('area', areas)
-    statsMap = Object.fromEntries((stats || []).filter((s: any) => s.avg_price_per_sqm).map((s: any) => [s.area, Number(s.avg_price_per_sqm)]))
+  if (areaSet.length > 0) {
+    const { data: stats } = await supabase
+      .from('area_stats')
+      .select('area,avg_price_per_sqm')
+      .in('area', areaSet)
+    statsMap = Object.fromEntries(
+      (stats || [])
+        .filter((s: any) => s.avg_price_per_sqm)
+        .map((s: any) => [s.area, Number(s.avg_price_per_sqm)])
+    )
   }
 
   const features = (data || []).map((r: any) => {
