@@ -17,6 +17,8 @@ async def upsert_listings(listings) -> int:
 
     rows = []
     for l in listings:
+        has_coords = getattr(l, 'lat', None) is not None and getattr(l, 'lng', None) is not None
+
         row = {
             "source":        l.source,
             "url":           l.url,
@@ -36,9 +38,12 @@ async def upsert_listings(listings) -> int:
             "lng":           getattr(l, 'lng', None),
             "image_url":     getattr(l, 'image_url', None),
             "is_active":     True,
-            "ai_verified":   getattr(l, 'lat', None) is not None,  # verified if we got coords
+            # Mark as verified only if we already have real coords from the scraper
+            # This prevents enrich_all.py from overwriting good coordinates
+            "ai_verified":   has_coords,
             "ai_tags_done":  False,
         }
+
         # Include pre-scraped tags from realestate.com.lb
         if getattr(l, '_furnished', None):
             row["furnished"] = l._furnished
