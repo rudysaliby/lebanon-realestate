@@ -4,13 +4,12 @@ import asyncio, re
 
 URLS = [
     ("https://www.olx.com.lb/properties/apartments-villas-for-sale/", "sale"),
-    ("https://www.olx.com.lb/properties/apartments-villas-for-rent/", "monthly"),
 ]
 
 class OLXScraper(BaseScraper):
     SOURCE = "olx"
 
-    async def scrape(self, max_pages=2):
+    async def scrape(self, max_pages=1):
         results = []
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -41,18 +40,23 @@ class OLXScraper(BaseScraper):
                     except Exception as e:
                         print(f"[OLX] Error: {e}")
 
-            # Visit detail pages to get coords + location hierarchy + description
+            # Visit detail pages in parallel batches of 5
             print(f"[OLX] Visiting detail pages for {len(results)} listings...")
             enriched = 0
-            for listing in results:
-                if listing.url:
+            sem = asyncio.Semaphore(5)
+
+            async def fetch_detail(listing):
+                nonlocal enriched
+                async with sem:
                     try:
                         ok = await self._scrape_detail(listing, context)
                         if ok:
                             enriched += 1
-                        await asyncio.sleep(0.4)
+                        await asyncio.sleep(0.3)
                     except:
                         pass
+
+            await asyncio.gather(*[fetch_detail(l) for l in results if l.url])
             print(f"[OLX] Got coords for {enriched}/{len(results)} listings")
 
             await browser.close()
@@ -99,7 +103,7 @@ class OLXScraper(BaseScraper):
         try:
             page = await context.new_page()
             await page.goto(listing.url, wait_until="domcontentloaded", timeout=20000)
-            await page.wait_for_timeout(1500)
+            await page.wait_for_timeout(1000)
 
             html = await page.content()
 
