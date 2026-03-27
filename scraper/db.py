@@ -16,51 +16,57 @@ async def upsert_listings(listings) -> int:
         return 0
 
     rows = []
+    seen_urls = set()
+
     for l in listings:
-        has_coords = getattr(l, 'lat', None) is not None and getattr(l, 'lng', None) is not None
+        # Deduplicate within batch
+        if not l.url or l.url in seen_urls:
+            continue
+        seen_urls.add(l.url)
+
+        has_coords = l.lat is not None and l.lng is not None
 
         row = {
-            "source":        l.source,
-            "url":           l.url,
-            "title":         l.title,
-            "description":   getattr(l, 'description', None),
-            "price":         l.price,
-            "currency":      getattr(l, 'currency', 'USD'),
-            "price_period":  getattr(l, 'price_period', None),
-            "property_type": getattr(l, 'property_type', None),
-            "size_sqm":      getattr(l, 'size_sqm', None),
-            "location_raw":  getattr(l, 'location_raw', None),
-            "area":          getattr(l, 'area', None),
-            "subregion":     getattr(l, 'subregion', None),
-            "region":        getattr(l, 'region', None),
-            "city":          "Beirut",
-            "lat":           getattr(l, 'lat', None),
-            "lng":           getattr(l, 'lng', None),
-            "image_url":     getattr(l, 'image_url', None),
-            "is_active":     True,
-            # Mark as verified only if we already have real coords from the scraper
-            # This prevents enrich_all.py from overwriting good coordinates
-            "ai_verified":   has_coords,
-            "ai_tags_done":  False,
+            "source":       l.source,
+            "url":          l.url,
+            "title":        l.title,
+            "description":  getattr(l, "description", None),
+            "price":        l.price,
+            "currency":     getattr(l, "currency", "USD"),
+            "price_period": getattr(l, "price_period", None),
+            "property_type":getattr(l, "property_type", None),
+            "size_sqm":     getattr(l, "size_sqm", None),
+            "location_raw": getattr(l, "location_raw", None),
+            "area":         getattr(l, "area", None),
+            "subregion":    getattr(l, "subregion", None),
+            "region":       getattr(l, "region", None),
+            "city":         "Beirut",
+            "lat":          l.lat,
+            "lng":          l.lng,
+            "image_url":    getattr(l, "image_url", None),
+            "is_active":    True,
+            # If scraper got real coords, mark verified so enrichment skips it
+            "ai_verified":  has_coords,
+            "ai_tags_done": False,
         }
 
-        # Include pre-scraped tags from realestate.com.lb
-        if getattr(l, '_furnished', None):
+        # Pre-scraped tags from realestate.com.lb
+        if getattr(l, "_furnished", None):
             row["furnished"] = l._furnished
-        if getattr(l, '_bedrooms', None):
+        if getattr(l, "_bedrooms", None):
             row["bedrooms"] = l._bedrooms
-        if getattr(l, '_bathrooms', None):
+        if getattr(l, "_bathrooms", None):
             row["bathrooms"] = l._bathrooms
-        if getattr(l, '_amenities', None):
+        if getattr(l, "_amenities", None):
             row["features"] = l._amenities
-        if getattr(l, '_floor', None):
+        if getattr(l, "_floor", None):
             row["floor_type"] = l._floor
 
         rows.append({k: v for k, v in row.items() if v is not None})
 
     chunk_size = 50
     total = 0
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i:i + chunk_size]
             all_keys = set()
@@ -78,6 +84,6 @@ async def upsert_listings(listings) -> int:
                 total += len(chunk)
                 print(f"[DB] Saved {len(chunk)} rows (total: {total})")
             else:
-                print(f"[DB] Error: {resp.status_code} - {resp.text[:200]}")
+                print(f"[DB] Error: {resp.status_code} - {resp.text[:300]}")
 
     return total
