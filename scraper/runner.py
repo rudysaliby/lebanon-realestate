@@ -13,16 +13,22 @@ async def run():
     print("Lebanon Real Estate Scraper - Starting")
     print("=" * 50)
 
-    scrapers = [OLXScraper(), RealEstateLBScraper()]
+    # OLX: 10 pages × 45 cards = ~450 listings
+    # realestate.com.lb: all pages (2598 total, 20/page = 130 pages)
+    scraper_configs = [
+        (OLXScraper(), 10),
+        (RealEstateLBScraper(), 130),
+    ]
+
     all_listings = []
 
     results = await asyncio.gather(
-        *[s.scrape(max_pages=1) for s in scrapers],
+        *[s.scrape(max_pages=pages) for s, pages in scraper_configs],
         return_exceptions=True
     )
 
     for i, res in enumerate(results):
-        name = scrapers[i].SOURCE
+        name = scraper_configs[i][0].SOURCE
         if isinstance(res, Exception):
             print(f"[Runner] {name} failed: {res}")
         else:
