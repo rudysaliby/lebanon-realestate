@@ -1,9 +1,9 @@
 """
-Combined enrichment: location + AI tags.
+Combined enrichment: location + AI tags for all unprocessed listings.
 Coordinate priority:
-  1. lebanon_regions.py lookup (Google Maps pre-geocoded) — free & instant
+  1. lebanon_regions.py lookup (pre-geocoded Google Maps coords) — free & instant
   2. Google Maps API — if area not in regions DB
-  3. Skip — no coordinate guessing ever
+  3. Skip listing entirely if neither works — no coordinate guessing ever
 """
 import asyncio
 import os
@@ -14,8 +14,8 @@ load_dotenv()
 
 from ai_tagger import extract_tags
 
-SUPABASE_URL  = os.environ["SUPABASE_URL"]
-SUPABASE_KEY  = os.environ["SUPABASE_SECRET_KEY"]
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_SECRET_KEY"]
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 GOOGLE_KEY    = os.environ.get("GOOGLE_MAPS_KEY", "")
 
@@ -35,7 +35,7 @@ Given a property listing title, extract the area/neighborhood name only.
 Return ONLY JSON: {"area": "area name in English", "confidence": "high"|"medium"|"low"}
 Examples: Hamra, Achrafieh, Jounieh, Kaslik, Ballouneh, Rabieh, Mansourieh, Baabda,
 Dbayeh, Jdeideh, Antelias, Broumana, Batroun, Jbeil, Zahle, Tripoli, Saida.
-Return the area NAME only — never coordinates.
+Return the area NAME only. Never return coordinates.
 If location is truly unclear return confidence "low" and area null."""
 
 async def extract_location(title: str, client: httpx.AsyncClient) -> dict | None:
@@ -91,17 +91,34 @@ async def update_listing(listing_id: str, updates: dict, client: httpx.AsyncClie
     return resp.status_code in (200, 204)
 
 async def get_pending(client: httpx.AsyncClient, filter_key: str) -> list:
-    resp = await client.get(
-        f"{SUPABASE_URL}/rest/v1/listings",
-        headers=HEADERS_SB,
-        params={
-            "select": "id,title,description,area,lat,lng",
-            "is_active": "eq.true",
-            filter_key: "eq.false",
-            "limit": "500",
-        }
-    )
-    return resp.json() if resp.status_code == 200 else []
+    all_rows = []
+    page_size = 500
+    offset = 0
+    batch = 1
+    while True:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/listings",
+            headers=HEADERS_SB,
+            params={
+                "select": "id,title,description,area,lat,lng",
+                "is_active": "eq.true",
+                filter_key: "eq.false",
+                "limit": str(page_size),
+                "offset": str(offset),
+            }
+        )
+        if resp.status_code not in (200, 206):
+            break
+        data = resp.json()
+        if not data:
+            break
+        all_rows.extend(data)
+        print(f"  [Fetch] Batch {batch}: {len(data)} rows (total: {len(all_rows)})")
+        if len(data) < page_size:
+            break
+        offset += page_size
+        batch += 1
+    return all_rows
 
 async def run_enrichment():
     print("=" * 50)
@@ -116,10 +133,12 @@ async def run_enrichment():
 
         loc_updated = 0
         loc_skipped = 0
+        loc_counter = 0
+        loc_total = len(unverified)
         loc_sem = asyncio.Semaphore(1)
 
         async def enrich_location(listing):
-            nonlocal loc_updated, loc_skipped
+            nonlocal loc_updated, loc_skipped, loc_counter
             title = listing.get("title") or ""
             if not title:
                 return
@@ -127,7 +146,7 @@ async def run_enrichment():
             async with loc_sem:
                 await asyncio.sleep(1.3)
 
-                # Step 1: Claude extracts area name only — no coordinates
+                # Step 1: Claude extracts area name only
                 result = await extract_location(title, client)
                 if not result or not result.get("area") or result.get("confidence") == "low":
                     await update_listing(listing["id"], {"ai_verified": True}, client)
@@ -140,28 +159,33 @@ async def run_enrichment():
                 region_data = lookup(area)
 
                 if region_data:
-                    lat           = region_data["lat"]
-                    lng           = region_data["lng"]
-                    region        = region_data["region"]
-                    subregion     = region_data["subregion"]
+                    lat       = region_data["lat"]
+                    lng       = region_data["lng"]
+                    region    = region_data["region"]
+                    subregion = region_data["subregion"]
                     official_area = region_data.get("area") or area
-                    coord_source  = "regions_db"
+                    coord_source = "regions_db"
                 else:
-                    # Step 3: Google Maps API directly
+                    # Step 3: Call Google Maps API directly
                     coords = await geocode_google(area, client)
                     if not coords:
-                        # Skip — no guessing
+                        # Skip — no pin, no guessing
                         await update_listing(listing["id"], {"ai_verified": True}, client)
                         loc_skipped += 1
                         print(f"  ✗ Not found: '{title[:45]}' → {area}")
                         return
-                    lat, lng      = coords
-                    region        = None
-                    subregion     = None
+                    lat, lng = coords
+                    region = None
+                    subregion = None
                     official_area = area
-                    coord_source  = "google_api"
+                    coord_source = "google_api"
 
-                updates = {"area": official_area, "lat": lat, "lng": lng, "ai_verified": True}
+                updates = {
+                    "area": official_area,
+                    "lat": lat,
+                    "lng": lng,
+                    "ai_verified": True,
+                }
                 if region:    updates["region"]    = region
                 if subregion: updates["subregion"] = subregion
 
@@ -171,7 +195,7 @@ async def run_enrichment():
                     print(f"  ✓ [{coord_source}] '{title[:40]}' → {official_area} ({lat:.4f},{lng:.4f})")
 
         await asyncio.gather(*[enrich_location(l) for l in unverified])
-        print(f"[Location] Done — {loc_updated} enriched, {loc_skipped} skipped")
+        print(f"[Location] Done — {loc_updated} enriched, {loc_skipped} skipped (no location found)")
 
         # --- PHASE 2: Tag extraction ---
         untagged = await get_pending(client, "ai_tags_done")
@@ -186,12 +210,14 @@ async def run_enrichment():
             desc  = listing.get("description") or ""
             if not title:
                 return
+
             async with tag_sem:
                 await asyncio.sleep(0.8)
                 tags = await extract_tags(title, desc, client)
                 if not tags:
                     await update_listing(listing["id"], {"ai_tags_done": True}, client)
                     return
+
                 updates = {"ai_tags_done": True}
                 if tags.get("furnished"):    updates["furnished"]    = tags["furnished"]
                 if tags.get("condition"):    updates["condition"]    = tags["condition"]
@@ -203,6 +229,7 @@ async def run_enrichment():
                 if tags.get("payment"):      updates["payment_type"] = tags["payment"]
                 if tags.get("building_age"): updates["building_age"] = tags["building_age"]
                 if tags.get("lifestyle"):    updates["lifestyle"]    = tags["lifestyle"]
+
                 ok = await update_listing(listing["id"], updates, client)
                 if ok:
                     tag_updated += 1
