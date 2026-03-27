@@ -19,6 +19,8 @@ class RawListing:
     lat: Optional[float] = None
     lng: Optional[float] = None
     image_url: Optional[str] = None
+    subregion: Optional[str] = None
+    region: Optional[str] = None
 
 class BaseScraper:
     SOURCE = ""
