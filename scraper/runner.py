@@ -153,12 +153,15 @@ async def run():
         except Exception as e:
             relb_prog.finish(f"ERROR: {e}")
 
-    await asyncio.gather(
-        run_olx(),
-        run_relb(),
-        render_loop([olx_prog, relb_prog], stop_render)
-    )
+    # Run scrapers, cancel render loop when both finish
+    scraper_task = asyncio.gather(run_olx(), run_relb())
+    render_task  = asyncio.create_task(render_loop([olx_prog, relb_prog], stop_render))
+
+    await scraper_task
     stop_render.set()
+    render_task.cancel()
+    try: await render_task
+    except asyncio.CancelledError: pass
 
     # Final render
     sys.stdout.write("\033[2A")
