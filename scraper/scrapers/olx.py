@@ -171,7 +171,7 @@ class OLXScraper(BaseScraper):
             async def fetch_page_tracked(page_num):
                 infos = await scrape_page(ctx, page_num, sem)
                 if progress:
-                    progress.update(1, f"OLX listing pages {page_num}/{max_pages}")
+                    progress.update(1, f"OLX listing pages {page_num}/{max_pages} found:{len(infos)}")
                 else:
                     log(f"[OLX] Page {page_num}/{max_pages}: {len(infos)} listings")
                 return infos

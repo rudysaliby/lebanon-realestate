@@ -131,7 +131,7 @@ class RealEstateLBScraper(BaseScraper):
                         try:
                             r = await client.get(LIST_URL, params={"pg": page_num, "sort": "listing_level", "ct": 1, "direction": "asc"})
                             docs = r.json().get("data", {}).get("docs", [])
-                            if progress: progress.update(1, f"RELB page {page_num}/{total_pages}")
+                            if progress: progress.update(1, f"RELB page {page_num}/{total_pages} found:{len(docs)}")
                             else: log(f"[RELB] Page {page_num}/{total_pages}: {len(docs)}")
                             return docs
                         except Exception as e:

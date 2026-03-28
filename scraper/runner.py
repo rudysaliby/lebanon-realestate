@@ -31,61 +31,69 @@ def _bar(pct, width=20):
     return "█" * filled + "░" * (width - filled)
 
 class ScrapeProgress:
-    """Two-phase progress: pages then details. ETA based on current phase only."""
-    def __init__(self, name, pages, details):
-        self.name        = name
-        self.pages       = pages
-        self.details     = details
-        self.pages_done  = 0
-        self.details_done = 0
-        self.start       = time.time()
-        self.phase       = "pages"   # "pages" or "details"
-        self.status      = "starting..."
-        self.finished    = False
+    def __init__(self, name, total_pages):
+        self.name          = name
+        self.total_pages   = total_pages
+        self.pages_done    = 0
+        self.listings_found = 0      # actual listings found from pages
+        self.details_done  = 0
+        self.details_ok    = 0       # details that returned a valid listing
+        self.phase         = "pages" # "pages" or "details"
+        self.start         = time.time()
+        self.finished      = False
+        self.summary       = ""
 
-    def update(self, n=1, status=""):
-        if status: self.status = status
-        if "detail" in status.lower() or "details" in status.lower():
-            self.phase = "details"
-            self.details_done = min(self.details_done + n, self.details)
-        else:
-            self.pages_done = min(self.pages_done + n, self.pages)
+    def page_done(self, listings_on_page):
+        self.pages_done     += 1
+        self.listings_found += listings_on_page
+
+    def detail_done(self, success: bool):
+        self.details_done += 1
+        if success:
+            self.details_ok += 1
+
+    def start_details(self):
+        self.phase = "details"
+
+    def finish(self, summary=""):
+        self.finished = True
+        self.summary  = summary
 
     def render(self):
         elapsed = time.time() - self.start
-        # Pages phase: % based on pages. Details phase: % based on details.
-        if self.phase == "pages":
-            done  = self.pages_done
-            total = self.pages
-        else:
-            done  = self.details_done
-            total = self.details
-        # Never show 0% if we have progress
-        if done == 0 and self.pages_done > 0:
-            done  = self.pages_done
-            total = self.pages
+        sym = "✓" if self.finished else "⟳"
 
-        pct  = int(done / total * 100) if total > 0 else 0
-        bar  = _bar(pct)
-        rate = done / elapsed if elapsed > 0 and done > 0 else 0
-        eta  = (total - done) / rate if rate > 0 and done > 0 else -1
-        sym  = "✓" if self.finished else "⟳"
-        # Show only current phase counter
-        if self.phase == "pages":
-            counter = f"page {self.pages_done}/{self.pages}"
-        else:
-            counter = f"detail {self.details_done}/{self.details}"
+        if self.finished:
+            # Always 100% bar on finish, summary next to it
+            bar  = _bar(100)
+            line = (f"\r  {sym} {self.name:<5} [{bar}] 100%"
+                    f"  {_fmt(elapsed)}"
+                    f"  {self.summary:<55}")
 
-        line = (f"\r  {sym} {self.name:<5} [{bar}] {pct:>3}%"
-                f"  {_fmt(elapsed)} elapsed"
-                f"  ETA {_fmt(eta) if not self.finished else '---'}"
-                f"  {counter:<22}")
+        elif self.phase == "pages":
+            pct  = int(self.pages_done / self.total_pages * 100) if self.total_pages > 0 else 0
+            bar  = _bar(pct)
+            rate = self.pages_done / elapsed if elapsed > 0 and self.pages_done > 0 else 0
+            eta  = (self.total_pages - self.pages_done) / rate if rate > 0 else -1
+            line = (f"\r  {sym} {self.name:<5} [{bar}] {pct:>3}%"
+                    f"  {_fmt(elapsed)} elapsed  ETA {_fmt(eta)}"
+                    f"  page {self.pages_done}/{self.total_pages}"
+                    f"  {self.listings_found} listings found{' '*10}")
+
+        else:  # details phase
+            total = self.listings_found
+            pct   = int(self.details_done / total * 100) if total > 0 else 0
+            bar   = _bar(pct)
+            rate  = self.details_done / elapsed if elapsed > 0 and self.details_done > 0 else 0
+            eta   = (total - self.details_done) / rate if rate > 0 else -1
+            ok_pct = int(self.details_ok / self.details_done * 100) if self.details_done > 0 else 0
+            line  = (f"\r  {sym} {self.name:<5} [{bar}] {pct:>3}%"
+                     f"  {_fmt(elapsed)} elapsed  ETA {_fmt(eta)}"
+                     f"  detail {self.details_done}/{total}"
+                     f"  {self.details_ok} saved ({ok_pct}%){' '*5}")
+
         sys.stdout.write(line)
         sys.stdout.flush()
-
-    def finish(self, msg=""):
-        self.finished = True
-        self.status = msg
 
 async def cleanup_unlocatable():
     async with httpx.AsyncClient(timeout=30) as client:
@@ -113,16 +121,13 @@ async def run():
     print("  🏠 LEBANON REAL ESTATE SCRAPER")
     print(f"  Started: {time.strftime('%H:%M:%S')}")
     print("█" * 57)
-
     print("\n── STEP 1/4  OLX + Realestate.com.lb in parallel\n")
 
-    OLX_PAGES   = 100
-    OLX_DETAILS = OLX_PAGES * 45
-    RELB_PAGES  = 131
-    RELB_DET    = 2607
+    OLX_PAGES  = 100
+    RELB_PAGES = 131
 
-    olx_prog  = ScrapeProgress("OLX",  OLX_PAGES,  OLX_DETAILS)
-    relb_prog = ScrapeProgress("RELB", RELB_PAGES, RELB_DET)
+    olx_prog  = ScrapeProgress("OLX",  OLX_PAGES)
+    relb_prog = ScrapeProgress("RELB", RELB_PAGES)
 
     sys.stdout.write(f"  ⟳ OLX   [{'░'*20}]   0%  starting...\n")
     sys.stdout.write(f"  ⟳ RELB  [{'░'*20}]   0%  starting...\n")
@@ -132,19 +137,42 @@ async def run():
     relb_result = []
     stop_render = asyncio.Event()
 
+    # Callback objects passed to scrapers
+    import re as _re
+
     class OLXCb:
         def update(self, n=1, label=""):
-            olx_prog.update(n, label)
+            if "listing pages" in label or ("page" in label.lower() and "detail" not in label.lower()):
+                m = _re.search(r"found:(\d+)", label)
+                count = int(m.group(1)) if m else 45
+                olx_prog.page_done(count)
+            elif "detail" in label.lower():
+                if olx_prog.phase == "pages":
+                    olx_prog.start_details()
+                success = "error" not in label.lower()
+                olx_prog.detail_done(success)
 
     class RELBCb:
         def update(self, n=1, label=""):
-            relb_prog.update(n, label)
+            if "page" in label.lower() and "detail" not in label.lower():
+                m = _re.search(r"found:(\d+)", label)
+                count = int(m.group(1)) if m else 20
+                relb_prog.page_done(count)
+            elif "detail" in label.lower():
+                if relb_prog.phase == "pages":
+                    relb_prog.start_details()
+                success = "error" not in label.lower()
+                relb_prog.detail_done(success)
 
     async def run_olx():
         nonlocal olx_result
         try:
             olx_result = await OLXScraper().scrape(max_pages=OLX_PAGES, progress=OLXCb())
-            olx_prog.finish(f"{len(olx_result)} listings")
+            with_coords = sum(1 for l in olx_result if l.lat)
+            pct = round(with_coords / max(len(olx_result), 1) * 100)
+            scanned = olx_prog.listings_found
+            saved_pct = round(len(olx_result) / max(scanned, 1) * 100)
+            olx_prog.finish(f"scanned {scanned}  →  saved {len(olx_result)} ({saved_pct}%)  |  {with_coords} with coords ({pct}%)")
         except Exception as e:
             olx_prog.finish(f"ERROR: {e}")
 
@@ -153,30 +181,32 @@ async def run():
         await asyncio.sleep(0.2)
         try:
             relb_result = await RealEstateLBScraper().scrape(max_pages=9999, progress=RELBCb())
-            relb_prog.finish(f"{len(relb_result)} listings")
+            with_coords = sum(1 for l in relb_result if l.lat)
+            pct = round(with_coords / max(len(relb_result), 1) * 100)
+            scanned = relb_prog.listings_found
+            saved_pct = round(len(relb_result) / max(scanned, 1) * 100)
+            relb_prog.finish(f"scanned {scanned}  →  saved {len(relb_result)} ({saved_pct}%)  |  {with_coords} with coords ({pct}%)")
         except Exception as e:
             relb_prog.finish(f"ERROR: {e}")
 
-    # Run scrapers, cancel render loop when both finish
     scraper_task = asyncio.gather(run_olx(), run_relb())
     render_task  = asyncio.create_task(render_loop([olx_prog, relb_prog], stop_render))
-
     await scraper_task
     stop_render.set()
     render_task.cancel()
     try: await render_task
     except asyncio.CancelledError: pass
 
-    # Final render
+    # Final render — always 100% with summary
     sys.stdout.write("\033[2A")
-    olx_prog.render(); sys.stdout.write("\n")
+    olx_prog.render();  sys.stdout.write("\n")
     relb_prog.render(); sys.stdout.write("\n")
     sys.stdout.flush()
 
     all_listings = olx_result + relb_result
     with_coords  = sum(1 for l in all_listings if l.lat)
     pct = round(with_coords / max(len(all_listings), 1) * 100)
-    print(f"\n  📊 OLX: {len(olx_result)} | RELB: {len(relb_result)} | Total: {len(all_listings)} | {with_coords} with coords ({pct}%)")
+    print(f"\n  📊 Total: {len(all_listings)} listings  |  {with_coords} with coords ({pct}%)")
 
     # ── STEP 2: DB ────────────────────────────────────────────
     print(f"\n── STEP 2/4  Saving to database")
