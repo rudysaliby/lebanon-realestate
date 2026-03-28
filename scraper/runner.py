@@ -79,7 +79,7 @@ class ScrapeProgress:
         line = (f"\r  {sym} {self.name:<5} [{bar}] {pct:>3}%"
                 f"  {_fmt(elapsed)} elapsed"
                 f"  ETA {_fmt(eta) if not self.finished else '---'}"
-                f"  {counter:<22}  {self.status[:28]:<28}")
+                f"  {counter:<22}")
         sys.stdout.write(line)
         sys.stdout.flush()
 
