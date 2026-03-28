@@ -1,9 +1,8 @@
 """
-OLX Lebanon scraper — optimized.
-- Playwright ONCE to get session cookies
-- httpx for ALL listing pages in parallel (10x faster than Playwright per page)
-- httpx for ALL detail pages in parallel (20 concurrent)
-- Zero AI needed — all tags from page JSON
+OLX Lebanon scraper.
+- Playwright for listing pages (OLX blocks httpx even with cookies)
+- httpx for detail pages (20 parallel — fast)
+- All tags from page JSON, zero AI needed
 """
 import asyncio
 import re
@@ -15,9 +14,8 @@ from .base import BaseScraper, RawListing
 LISTING_URL = "https://www.olx.com.lb/properties/apartments-villas-for-sale/"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
 }
 
 def parse_params(html):
@@ -97,91 +95,85 @@ class OLXScraper(BaseScraper):
     SOURCE = "olx"
 
     async def scrape(self, max_pages=10, progress=None):
+        listing_infos = []
 
-        # ── Step 1: ONE Playwright load to get session cookies ────────────────
-        cookies_dict = {}
+        def log(msg):
+            if not progress: print(msg)
+
+        # ── Step 1: Playwright for listing pages ──────────────────────────────
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            ctx = await browser.new_context(user_agent=HEADERS["User-Agent"], viewport={"width": 1280, "height": 800})
-            page = await ctx.new_page()
-            await page.goto(LISTING_URL, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(2000)
-            raw_cookies = await ctx.cookies()
-            cookies_dict = {c["name"]: c["value"] for c in raw_cookies}
-            await page.close()
+            ctx = await browser.new_context(
+                user_agent=HEADERS["User-Agent"],
+                viewport={"width": 1280, "height": 800}
+            )
+
+            for page_num in range(1, max_pages + 1):
+                try:
+                    page = await ctx.new_page()
+                    await page.goto(f"{LISTING_URL}?page={page_num}", wait_until="domcontentloaded", timeout=30000)
+                    await page.wait_for_timeout(1500)
+                    cards = await page.query_selector_all("article")
+
+                    for card in cards:
+                        try:
+                            link = await card.query_selector("a[href]")
+                            href = await link.get_attribute("href") if link else None
+                            if not href: continue
+                            if not href.startswith("http"):
+                                href = f"https://www.olx.com.lb{href}"
+                            href = href.split("?")[0]
+                            if "/ad/" not in href: continue
+
+                            full_text = (await card.inner_text()).strip()
+                            lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+                            title = next((l for l in lines if len(l) > 15 and "USD" not in l and "$" not in l), None)
+                            price_raw = next((l for l in lines if "USD" in l or "$" in l), None)
+
+                            img_el = await card.query_selector("img[src]")
+                            img_url = None
+                            if img_el:
+                                src = await img_el.get_attribute("src")
+                                if src and src.startswith("http") and "placeholder" not in src.lower():
+                                    img_url = src
+
+                            if href not in [i["url"] for i in listing_infos]:
+                                listing_infos.append({"url": href, "title": title, "price_raw": price_raw, "image_url": img_url})
+                        except:
+                            continue
+
+                    await page.close()
+                    await asyncio.sleep(0.5)
+
+                    if progress:
+                        progress.update(1, f"OLX listing pages {page_num}/{max_pages}")
+                    else:
+                        log(f"[OLX] Page {page_num}/{max_pages}: {len(cards)} cards")
+
+                except Exception as e:
+                    log(f"[OLX] Page {page_num} error: {e}")
+                    if progress: progress.update(1, f"OLX page {page_num} error")
+                    try: await page.close()
+                    except: pass
+
             await browser.close()
 
-        if not progress:
-            print(f"[OLX] Got {len(cookies_dict)} session cookies, fetching {max_pages} pages...")
+        total = len(listing_infos)
+        log(f"[OLX] {total} listings found, fetching details with httpx...")
 
-        # ── Step 2: httpx for ALL listing pages in parallel ───────────────────
-        listing_urls = []
-        page_sem = asyncio.Semaphore(10)
-
-        async with httpx.AsyncClient(
-            headers=HEADERS,
-            cookies=cookies_dict,
-            timeout=20,
-            follow_redirects=True,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=15)
-        ) as client:
-
-            async def fetch_listing_page(page_num):
-                async with page_sem:
-                    try:
-                        resp = await client.get(LISTING_URL, params={"page": page_num})
-                        if resp.status_code != 200:
-                            if progress: progress.update(1, f"OLX page {page_num} blocked")
-                            return []
-                        html = resp.text
-                        urls = []
-                        seen = set()
-                        for href in re.findall(r'href="(https://www\.olx\.com\.lb/ad/[^"]+)"', html):
-                            base = href.split("?")[0]
-                            if base not in seen:
-                                seen.add(base)
-                                urls.append({"url": base, "title": None, "price_raw": None, "image_url": None})
-                        if progress:
-                            progress.update(1, f"OLX listing pages {page_num}/{max_pages}")
-                        else:
-                            print(f"[OLX] Page {page_num}/{max_pages}: {len(urls)} listings")
-                        return urls
-                    except Exception as e:
-                        if progress: progress.update(1, f"OLX page {page_num} error")
-                        else: print(f"[OLX] Page {page_num} error: {e}")
-                        return []
-
-            page_results = await asyncio.gather(*[fetch_listing_page(p) for p in range(1, max_pages + 1)])
-
-        # Deduplicate
-        seen = set()
-        for urls in page_results:
-            for info in urls:
-                if info["url"] not in seen:
-                    seen.add(info["url"])
-                    listing_urls.append(info)
-
-        total = len(listing_urls)
-        if not progress:
-            print(f"[OLX] {total} unique listings, fetching details...")
-
-        # ── Step 3: httpx for ALL detail pages in parallel ────────────────────
-        results = []
-        detail_sem = asyncio.Semaphore(20)
+        # ── Step 2: httpx for detail pages — 20 parallel ─────────────────────
+        results  = []
+        sem      = asyncio.Semaphore(20)
         completed = 0
-        lock = asyncio.Lock()
+        lock     = asyncio.Lock()
+        det_start = time.time()
 
-        async with httpx.AsyncClient(
-            headers=HEADERS,
-            cookies=cookies_dict,
-            timeout=15,
-            follow_redirects=True,
-            limits=httpx.Limits(max_connections=30, max_keepalive_connections=20)
-        ) as client:
+        async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True,
+                                     limits=httpx.Limits(max_connections=30)) as client:
 
             async def fetch_detail(info):
                 nonlocal completed
-                async with detail_sem:
+                async with sem:
                     try:
                         resp = await client.get(info["url"])
                         if resp.status_code != 200:
@@ -197,6 +189,9 @@ class OLXScraper(BaseScraper):
                         if params.get("price"):
                             try: price = float(params["price"].replace(",", ""))
                             except: pass
+                        if not price and info.get("price_raw"):
+                            try: price = float(re.sub(r"[^\d.]", "", info["price_raw"].replace(",", "")))
+                            except: pass
                         if not price:
                             return None
 
@@ -206,7 +201,7 @@ class OLXScraper(BaseScraper):
                             try: size_sqm = float(params["ft"].replace(",", ""))
                             except: pass
 
-                        # Title from page h1
+                        # Title
                         title_m = re.search(r'<h1[^>]*>([^<]+)</h1>', html)
                         title = title_m.group(1).strip() if title_m else (info.get("title") or "")
 
@@ -259,12 +254,14 @@ class OLXScraper(BaseScraper):
                             if progress:
                                 progress.update(1, f"OLX details {completed}/{total}")
                             elif completed % 500 == 0 or completed == total:
-                                print(f"  [OLX] {completed}/{total} details fetched")
+                                elapsed = time.time() - det_start
+                                rate = completed / elapsed if elapsed > 0 else 0
+                                eta = (total - completed) / rate if rate > 0 else 0
+                                log(f"  [OLX] {completed}/{total} | {int(rate)}/s | ETA {int(eta)}s")
 
-            listings = await asyncio.gather(*[fetch_detail(info) for info in listing_urls])
+            listings = await asyncio.gather(*[fetch_detail(info) for info in listing_infos])
             results = [l for l in listings if l]
 
         with_coords = sum(1 for r in results if r.lat)
-        if not progress:
-            print(f"[OLX] Done: {len(results)} listings | {with_coords} with coords")
+        log(f"[OLX] Done: {len(results)} listings | {with_coords} with coords")
         return results
