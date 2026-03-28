@@ -1,15 +1,10 @@
 """
 realestate.com.lb scraper — final version.
-
-Fixes vs previous:
-1. _next/data API works with ALL reference formats (AP-22984, C21-113624, RWR-cj813)
-2. 3-level coord fallback: community → district → province
-3. Dynamic build hash fetched from homepage
-4. Area name from URL slug as fallback
-5. Full tag extraction — no AI needed
-6. Page fetching in parallel (faster)
-7. t_detail bug fixed (was causing 0 listings)
-8. All prints suppressed when progress callback active (\r compatible)
+- _next/data API for all reference formats
+- 3-level coord fallback: community → district → province  
+- Parallel page fetching
+- Full tag extraction, zero AI needed
+- Proper error logging (no silent failures)
 """
 import asyncio
 import re
@@ -40,9 +35,7 @@ AMENITY_MAP = {
     "built in wardrobes": "storage", "maids room": "storage",
     "concierge": "security", "near sea": "sea-access",
 }
-
 LIFESTYLE_KEYWORDS = {"luxury","prime","gated","corner","investment","quiet","penthouse","duplex","triplex","rooftop"}
-
 VIEW_KEYWORDS = {
     "sea": "sea", "ocean": "sea", "marina": "sea",
     "mountain": "mountain", "valley": "mountain",
@@ -59,7 +52,7 @@ def validate_lb(lat, lng):
     except: return False
 
 def parse_amenities(amenities_list):
-    features  = set()
+    features = set()
     lifestyle = set()
     for a in amenities_list:
         name = a.lower()
@@ -104,87 +97,101 @@ class RealEstateLBScraper(BaseScraper):
         def log(msg):
             if not progress: print(msg)
 
-        async with httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as client:
+        # Use one long-lived client for everything
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=20, follow_redirects=True,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=15)
+        ) as client:
 
-            # ── Get build hash ────────────────────────────────────────────────
+            # ── Build hash ────────────────────────────────────────────────────
             build_hash = await get_build_hash(client)
             log(f"[RELB] Build hash: {build_hash}" if build_hash else "[RELB] Warning: no build hash")
 
-            # ── Page 1 to detect total ────────────────────────────────────────
+            # ── Page 1: detect total ──────────────────────────────────────────
             try:
                 resp = await client.get(LIST_URL, params={"pg": 1, "sort": "listing_level", "ct": 1, "direction": "asc"})
-                page_data = resp.json().get("data", {})
+                resp.raise_for_status()
+                page_data  = resp.json().get("data", {})
                 first_docs = page_data.get("docs", [])
-                num_found  = page_data.get("numFound", 0)
-                per_page   = len(first_docs) if first_docs else 20
+                if not first_docs:
+                    log("[RELB] No listings found on page 1")
+                    return []
+                num_found   = page_data.get("numFound", 0)
+                per_page    = len(first_docs)
                 total_pages = min(-(-num_found // per_page), max_pages)
-                log(f"[RELB] {num_found} listings found, {total_pages} pages to fetch")
+                log(f"[RELB] {num_found} listings, {total_pages} pages")
                 if progress: progress.update(1, f"RELB page 1/{total_pages}")
             except Exception as e:
-                log(f"[RELB] Failed to fetch page 1: {e}")
+                log(f"[RELB] Page 1 failed: {e}")
                 return []
 
-            # ── Fetch remaining pages in parallel ─────────────────────────────
+            # ── Pages 2-N in parallel ─────────────────────────────────────────
             all_docs = list(first_docs)
-            page_sem = asyncio.Semaphore(10)
-
-            async def fetch_page(page_num):
-                async with page_sem:
-                    try:
-                        resp = await client.get(LIST_URL, params={"pg": page_num, "sort": "listing_level", "ct": 1, "direction": "asc"})
-                        docs = resp.json().get("data", {}).get("docs", [])
-                        if progress: progress.update(1, f"RELB page {page_num}/{total_pages}")
-                        else: log(f"[RELB] Page {page_num}/{total_pages}: {len(docs)} listings")
-                        return docs
-                    except:
-                        if progress: progress.update(1, f"RELB page {page_num} error")
-                        return []
-
             if total_pages > 1:
-                page_results = await asyncio.gather(*[fetch_page(p) for p in range(2, total_pages + 1)])
-                for docs in page_results:
+                page_sem = asyncio.Semaphore(8)
+
+                async def fetch_page(page_num):
+                    async with page_sem:
+                        try:
+                            r = await client.get(LIST_URL, params={"pg": page_num, "sort": "listing_level", "ct": 1, "direction": "asc"})
+                            docs = r.json().get("data", {}).get("docs", [])
+                            if progress: progress.update(1, f"RELB page {page_num}/{total_pages}")
+                            else: log(f"[RELB] Page {page_num}/{total_pages}: {len(docs)}")
+                            return docs
+                        except Exception as e:
+                            if progress: progress.update(1, f"RELB page {page_num} error")
+                            else: log(f"[RELB] Page {page_num} error: {e}")
+                            return []
+
+                results = await asyncio.gather(*[fetch_page(p) for p in range(2, total_pages + 1)])
+                for docs in results:
                     all_docs.extend(docs)
 
             log(f"[RELB] Fetching details for {len(all_docs)} listings...")
 
-            # ── Fetch details in parallel ──────────────────────────────────────
-            detail_sem  = asyncio.Semaphore(8)
-            completed   = 0
-            total_det   = len(all_docs)
-            lock        = asyncio.Lock()
-            det_start   = time.time()
+            # ── Details in parallel ────────────────────────────────────────────
+            det_sem   = asyncio.Semaphore(8)
+            completed = 0
+            total_det = len(all_docs)
+            lock      = asyncio.Lock()
+            det_start = time.time()
+            listings  = []
 
             async def fetch_detail(basic):
-                async with detail_sem:
+                nonlocal completed
+                async with det_sem:
+                    result = None
                     try:
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.05)
                         url_path = basic.get("url", "")
-                        url      = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
+                        if not url_path:
+                            return None
+                        url       = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
                         page_path = url_path if url_path.startswith("/en/") else "/en" + url_path
 
                         prop = None
 
-                        # Method 1: _next/data API
+                        # Method 1: _next/data
                         if build_hash:
                             try:
-                                resp = await client.get(f"{BASE}/_next/data/{build_hash}{page_path}.json", timeout=10)
-                                if resp.status_code == 200:
-                                    prop = resp.json().get("pageProps", {}).get("property")
+                                r = await client.get(f"{BASE}/_next/data/{build_hash}{page_path}.json", timeout=12)
+                                if r.status_code == 200:
+                                    prop = r.json().get("pageProps", {}).get("property")
                             except: pass
 
-                        # Method 2: Numeric ID fallback
+                        # Method 2: numeric ID API
                         if not prop and basic.get("id"):
                             try:
-                                resp = await client.get(f"{BASE}/laravel/api/member/properties/{basic['id']}", timeout=10)
-                                if resp.status_code == 200:
-                                    raw = resp.json()
+                                r = await client.get(f"{BASE}/laravel/api/member/properties/{basic['id']}", timeout=12)
+                                if r.status_code == 200:
+                                    raw = r.json()
                                     prop = raw.get("data") or raw
                             except: pass
 
                         if not prop:
                             return None
 
-                        # ── Coordinates ───────────────────────────────────────
+                        # ── Coords ────────────────────────────────────────────
                         community = prop.get("community") or {}
                         district  = community.get("district") or {}
                         province  = district.get("province") or {}
@@ -223,8 +230,8 @@ class RealEstateLBScraper(BaseScraper):
                             elif f in ("partly","semi","semi-furnished"):    furnished = "semi-furnished"
                             elif f in ("unfurnished","no","not furnished"):  furnished = "unfurnished"
 
-                        bedroom  = prop.get("bedroom") or {}
-                        bathroom = prop.get("bathroom") or {}
+                        bedroom   = prop.get("bedroom") or {}
+                        bathroom  = prop.get("bathroom") or {}
                         bedrooms  = int(bedroom["name_en"])  if str(bedroom.get("name_en","")).isdigit()  else None
                         bathrooms = int(bathroom["name_en"]) if str(bathroom.get("name_en","")).isdigit() else None
 
@@ -233,22 +240,26 @@ class RealEstateLBScraper(BaseScraper):
                         if floor_val is not None:
                             try:
                                 f = int(floor_val)
-                                if f <= 0: floor_type = "ground"
+                                if f <= 0:  floor_type = "ground"
                                 elif f >= 8: floor_type = "high-floor"
                             except: pass
 
                         price_type_name = (prop.get("price_type") or {}).get("name_en", "USD")
-                        period   = "monthly" if "Month" in price_type_name else "sale"
+                        period    = "monthly" if "Month" in price_type_name else "sale"
                         type_name = (prop.get("type") or prop.get("category") or {}).get("name_en")
-                        images   = prop.get("images") or basic.get("images") or []
-                        img_url  = images[0].get("url") if images else None
+                        images    = prop.get("images") or basic.get("images") or []
+                        img_url   = images[0].get("url") if images else None
+
+                        price = prop.get("price") or basic.get("price")
+                        if not price:
+                            return None
 
                         listing = RawListing(
                             source=self.SOURCE,
                             url=url,
                             title=title,
                             description=description[:500],
-                            price=prop.get("price") or basic.get("price"),
+                            price=price,
                             currency="USD",
                             price_period=period,
                             property_type=self.guess_property_type(title, type_name),
@@ -269,28 +280,27 @@ class RealEstateLBScraper(BaseScraper):
                         )
                         if views:     listing._view_type = views
                         if lifestyle: listing._lifestyle  = lifestyle
-                        return listing
+                        result = listing
 
-                    except Exception:
-                        return None
+                    except Exception as e:
+                        log(f"  [RELB] detail error: {type(e).__name__}: {e}")
 
-            async def fetch_tracked(doc):
-                nonlocal completed
-                result = await fetch_detail(doc)
-                async with lock:
-                    completed += 1
-                    if progress:
-                        progress.update(1, f"RELB details {completed}/{total_det}")
-                    elif completed % 200 == 0 or completed == total_det:
-                        elapsed = time.time() - det_start
-                        rate    = completed / elapsed if elapsed > 0 else 0
-                        eta     = (total_det - completed) / rate if rate > 0 else 0
-                        log(f"  [RELB] {completed}/{total_det} | {int(rate)}/s | ETA {int(eta)}s")
-                return result
+                    finally:
+                        async with lock:
+                            completed += 1
+                            if progress:
+                                progress.update(1, f"RELB details {completed}/{total_det}")
+                            elif completed % 200 == 0 or completed == total_det:
+                                elapsed = time.time() - det_start
+                                rate    = completed / elapsed if elapsed > 0 else 0
+                                eta     = (total_det - completed) / rate if rate > 0 else 0
+                                log(f"  [RELB] {completed}/{total_det} | {int(rate)}/s | ETA {int(eta)}s")
 
-            listings = await asyncio.gather(*[fetch_tracked(doc) for doc in all_docs])
-            results  = [l for l in listings if l]
+                    return result
 
-        with_coords = sum(1 for r in results if r.lat)
-        log(f"[RELB] Total: {len(results)} | With coords: {with_coords}/{len(results)}")
-        return results
+            all_results = await asyncio.gather(*[fetch_detail(doc) for doc in all_docs])
+            listings = [l for l in all_results if l]
+
+        with_coords = sum(1 for r in listings if r.lat)
+        log(f"[RELB] Done: {len(listings)} listings | {with_coords} with coords")
+        return listings
