@@ -108,11 +108,22 @@ class OLXScraper(BaseScraper):
                 viewport={"width": 1280, "height": 800}
             )
 
+            # Block images and fonts to speed up page loads
+            async def block_resources(route):
+                if route.request.resource_type in ("image", "font", "media", "stylesheet"):
+                    await route.abort()
+                else:
+                    await route.continue_()
+
+            # Run up to 3 pages in parallel
+            page_sem_pw = asyncio.Semaphore(3)
+
             for page_num in range(1, max_pages + 1):
                 try:
                     page = await ctx.new_page()
+                    await page.route("**/*", block_resources)
                     await page.goto(f"{LISTING_URL}?page={page_num}", wait_until="domcontentloaded", timeout=30000)
-                    await page.wait_for_timeout(1500)
+                    await page.wait_for_timeout(800)
                     cards = await page.query_selector_all("article")
 
                     for card in cards:
