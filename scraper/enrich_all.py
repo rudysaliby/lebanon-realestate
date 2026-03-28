@@ -276,7 +276,7 @@ async def run_enrichment():
                     continue
 
                 # Step 2: Check cache
-                cached = cache_lookup(area, cache)
+                cached = cache_lookup(area)
                 if cached:
                     updates = {"area": area, "lat": cached["lat"], "lng": cached["lng"], "ai_verified": True}
                     if cached.get("region"):    updates["region"]    = cached["region"]
@@ -296,10 +296,11 @@ async def run_enrichment():
                     lat = round(region_data["lat"] + random.uniform(-0.003, 0.003), 6)
                     lng = round(region_data["lng"] + random.uniform(-0.003, 0.003), 6)
                     # Save to cache for future runs
-                    cache[_norm(area)] = {
-                        "lat": region_data["lat"], "lng": region_data["lng"],
-                        "region": region_data.get("region"), "subregion": region_data.get("subregion")
-                    }
+                    try:
+                        from lebanon_regions import cache_save as _cache_save
+                        _cache_save(area, region_data['lat'], region_data['lng'],
+                                   region=region_data.get('region'), subregion=region_data.get('subregion'))
+                    except: pass
                     updates = {
                         "area": region_data.get("area") or area,
                         "lat": lat, "lng": lng, "ai_verified": True,
@@ -316,8 +317,10 @@ async def run_enrichment():
                 if coords:
                     lat, lng = coords
                     # Save to cache — feeds back for future runs!
-                    cache[_norm(area)] = {"lat": lat, "lng": lng, "region": None, "subregion": None}
-                    save_cache(cache)
+                    try:
+                        from lebanon_regions import cache_save as _cache_save
+                        _cache_save(area, lat, lng)
+                    except: pass
                     updates = {"area": area, "lat": lat, "lng": lng, "ai_verified": True}
                     await update_listing(listing["id"], updates, client)
                     loc_updated += 1
