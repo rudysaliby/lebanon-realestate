@@ -1,7 +1,9 @@
 """
 OLX Lebanon scraper.
-- Playwright for listing pages (OLX blocks httpx even with cookies)
-- httpx for detail pages (20 parallel — fast)
+- Playwright for listing pages (OLX blocks httpx)
+  - Blocks images/CSS for faster loads
+  - 3 pages in parallel
+- httpx for detail pages (20 parallel)
 - All tags from page JSON, zero AI needed
 """
 import asyncio
@@ -91,6 +93,62 @@ def parse_lifestyle(title, params):
     if "investment" in text: tags.append("investment")
     return list(set(tags))
 
+async def scrape_page(context, page_num, sem):
+    """Scrape one OLX listing page, return list of listing infos."""
+    async with sem:
+        page = None
+        try:
+            page = await context.new_page()
+
+            # Block images, fonts, media to speed up loading
+            async def block_resources(route):
+                if route.request.resource_type in ("image", "font", "media", "stylesheet"):
+                    await route.abort()
+                else:
+                    await route.continue_()
+
+            await page.route("**/*", block_resources)
+            await page.goto(f"{LISTING_URL}?page={page_num}", wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(800)
+
+            cards = await page.query_selector_all("article")
+            infos = []
+
+            for card in cards:
+                try:
+                    link = await card.query_selector("a[href]")
+                    href = await link.get_attribute("href") if link else None
+                    if not href: continue
+                    if not href.startswith("http"):
+                        href = f"https://www.olx.com.lb{href}"
+                    href = href.split("?")[0]
+                    if "/ad/" not in href: continue
+
+                    full_text = (await card.inner_text()).strip()
+                    lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+                    title = next((l for l in lines if len(l) > 15 and "USD" not in l and "$" not in l), None)
+                    price_raw = next((l for l in lines if "USD" in l or "$" in l), None)
+
+                    img_el = await card.query_selector("img[src]")
+                    img_url = None
+                    if img_el:
+                        src = await img_el.get_attribute("src")
+                        if src and src.startswith("http") and "placeholder" not in src.lower():
+                            img_url = src
+
+                    infos.append({"url": href, "title": title, "price_raw": price_raw, "image_url": img_url})
+                except:
+                    continue
+
+            await page.close()
+            return infos
+
+        except Exception as e:
+            if page:
+                try: await page.close()
+                except: pass
+            return []
+
 class OLXScraper(BaseScraper):
     SOURCE = "olx"
 
@@ -100,7 +158,7 @@ class OLXScraper(BaseScraper):
         def log(msg):
             if not progress: print(msg)
 
-        # ── Step 1: Playwright for listing pages ──────────────────────────────
+        # ── Step 1: Playwright for listing pages — 3 in parallel ──────────────
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             ctx = await browser.new_context(
@@ -108,75 +166,38 @@ class OLXScraper(BaseScraper):
                 viewport={"width": 1280, "height": 800}
             )
 
-            # Block images and fonts to speed up page loads
-            async def block_resources(route):
-                if route.request.resource_type in ("image", "font", "media", "stylesheet"):
-                    await route.abort()
+            sem = asyncio.Semaphore(3)  # 3 pages in parallel
+
+            async def fetch_page_tracked(page_num):
+                infos = await scrape_page(ctx, page_num, sem)
+                if progress:
+                    progress.update(1, f"OLX listing pages {page_num}/{max_pages}")
                 else:
-                    await route.continue_()
+                    log(f"[OLX] Page {page_num}/{max_pages}: {len(infos)} listings")
+                return infos
 
-            # Run up to 3 pages in parallel
-            page_sem_pw = asyncio.Semaphore(3)
-
-            for page_num in range(1, max_pages + 1):
-                try:
-                    page = await ctx.new_page()
-                    await page.route("**/*", block_resources)
-                    await page.goto(f"{LISTING_URL}?page={page_num}", wait_until="domcontentloaded", timeout=30000)
-                    await page.wait_for_timeout(800)
-                    cards = await page.query_selector_all("article")
-
-                    for card in cards:
-                        try:
-                            link = await card.query_selector("a[href]")
-                            href = await link.get_attribute("href") if link else None
-                            if not href: continue
-                            if not href.startswith("http"):
-                                href = f"https://www.olx.com.lb{href}"
-                            href = href.split("?")[0]
-                            if "/ad/" not in href: continue
-
-                            full_text = (await card.inner_text()).strip()
-                            lines = [l.strip() for l in full_text.split("\n") if l.strip()]
-                            title = next((l for l in lines if len(l) > 15 and "USD" not in l and "$" not in l), None)
-                            price_raw = next((l for l in lines if "USD" in l or "$" in l), None)
-
-                            img_el = await card.query_selector("img[src]")
-                            img_url = None
-                            if img_el:
-                                src = await img_el.get_attribute("src")
-                                if src and src.startswith("http") and "placeholder" not in src.lower():
-                                    img_url = src
-
-                            if href not in [i["url"] for i in listing_infos]:
-                                listing_infos.append({"url": href, "title": title, "price_raw": price_raw, "image_url": img_url})
-                        except:
-                            continue
-
-                    await page.close()
-                    await asyncio.sleep(0.5)
-
-                    if progress:
-                        progress.update(1, f"OLX listing pages {page_num}/{max_pages}")
-                    else:
-                        log(f"[OLX] Page {page_num}/{max_pages}: {len(cards)} cards")
-
-                except Exception as e:
-                    log(f"[OLX] Page {page_num} error: {e}")
-                    if progress: progress.update(1, f"OLX page {page_num} error")
-                    try: await page.close()
-                    except: pass
+            page_results = await asyncio.gather(
+                *[fetch_page_tracked(p) for p in range(1, max_pages + 1)]
+            )
 
             await browser.close()
 
+        # Deduplicate
+        seen = set()
+        for infos in page_results:
+            for info in infos:
+                if info["url"] not in seen:
+                    seen.add(info["url"])
+                    listing_infos.append(info)
+
         total = len(listing_infos)
-        log(f"[OLX] {total} listings found, fetching details with httpx...")
+        log(f"[OLX] {total} unique listings, fetching details...")
 
         # ── Step 2: httpx for detail pages — 20 parallel ─────────────────────
-        results  = []
-        sem      = asyncio.Semaphore(20)
+        results   = []
+        sem_det   = asyncio.Semaphore(20)
         completed = 0
-        lock     = asyncio.Lock()
+        lock      = asyncio.Lock()
         det_start = time.time()
 
         async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True,
@@ -184,7 +205,8 @@ class OLXScraper(BaseScraper):
 
             async def fetch_detail(info):
                 nonlocal completed
-                async with sem:
+                async with sem_det:
+                    result = None
                     try:
                         resp = await client.get(info["url"])
                         if resp.status_code != 200:
@@ -255,10 +277,10 @@ class OLXScraper(BaseScraper):
                         )
                         if views:     listing._view_type = views
                         if lifestyle: listing._lifestyle  = lifestyle
-                        return listing
+                        result = listing
 
                     except:
-                        return None
+                        pass
                     finally:
                         async with lock:
                             completed += 1
@@ -269,6 +291,7 @@ class OLXScraper(BaseScraper):
                                 rate = completed / elapsed if elapsed > 0 else 0
                                 eta = (total - completed) / rate if rate > 0 else 0
                                 log(f"  [OLX] {completed}/{total} | {int(rate)}/s | ETA {int(eta)}s")
+                    return result
 
             listings = await asyncio.gather(*[fetch_detail(info) for info in listing_infos])
             results = [l for l in listings if l]
