@@ -1,5 +1,7 @@
 import asyncio
 import os
+import sys
+import time
 import httpx
 from dotenv import load_dotenv
 load_dotenv()
@@ -18,64 +20,127 @@ HEADERS_SB = {
     "Prefer": "return=minimal",
 }
 
+# ── Global progress tracker ───────────────────────────────────────────────────
+class Progress:
+    def __init__(self, total_work: int):
+        self.total    = total_work
+        self.done     = 0
+        self.start    = time.time()
+        self.label    = ""
+
+    def update(self, n: int = 1, label: str = ""):
+        self.done += n
+        if label:
+            self.label = label
+        self._render()
+
+    def set_label(self, label: str):
+        self.label = label
+        self._render()
+
+    def _render(self):
+        elapsed = time.time() - self.start
+        pct     = min(int(self.done / self.total * 100), 100)
+        bar     = "█" * (pct // 5) + "░" * (20 - pct // 5)
+        rate    = self.done / elapsed if elapsed > 0 else 0
+        eta     = (self.total - self.done) / rate if rate > 0 and self.done > 0 else 0
+        line    = (f"\r  [{bar}] {pct:>3}%  |  {_fmt(elapsed)} elapsed"
+                   f"  |  ETA: {_fmt(eta)}  |  {self.label}          ")
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+    def finish(self, msg: str = ""):
+        self.done = self.total
+        self._render()
+        sys.stdout.write(f"\n  ✓ {msg}\n")
+        sys.stdout.flush()
+
+def _fmt(s: float) -> str:
+    if s < 60:   return f"{int(s)}s"
+    if s < 3600: return f"{int(s//60)}m{int(s%60):02d}s"
+    return f"{int(s//3600)}h{int((s%3600)//60):02d}m"
+
+def banner(text: str):
+    print(f"\n── {text}")
+
 async def cleanup_unlocatable():
-    """Delete listings that still have no coords AND no area after enrichment — unsaveable."""
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.delete(
             f"{SUPABASE_URL}/rest/v1/listings",
             headers=HEADERS_SB,
-            params={
-                "is_active": "eq.true",
-                "lat": "is.null",
-                "area": "is.null",
-            }
+            params={"is_active": "eq.true", "lat": "is.null", "area": "is.null"}
         )
-        if resp.status_code in (200, 204):
-            print(f"[Cleanup] Removed unlocatable listings (no coords, no area)")
-        else:
-            print(f"[Cleanup] Error: {resp.status_code} {resp.text[:100]}")
+        return resp.status_code in (200, 204)
 
 async def run():
-    print("=" * 50)
-    print("Lebanon Real Estate Scraper - Starting")
-    print("=" * 50)
+    run_start = time.time()
 
-    scraper_configs = [
-        (OLXScraper(),          100),   # 100 pages × 45 cards = ~4,500 listings
-        (RealEstateLBScraper(), 9999),  # auto-stops at last page (~2,607 listings)
-    ]
+    # Estimate total work units
+    OLX_PAGES    = 100
+    OLX_DETAILS  = OLX_PAGES * 45   # ~4,500
+    RELB_PAGES   = 131
+    RELB_DETAILS = 2607
+    EXTRA        = 300               # DB + enrichment + cleanup
+    TOTAL        = OLX_PAGES + OLX_DETAILS + RELB_PAGES + RELB_DETAILS + EXTRA
 
-    all_listings = []
+    prog = Progress(TOTAL)
 
-    results = await asyncio.gather(
-        *[s.scrape(max_pages=pages) for s, pages in scraper_configs],
-        return_exceptions=True
-    )
+    print("█" * 55)
+    print("  🏠 LEBANON REAL ESTATE SCRAPER")
+    print(f"  Started: {time.strftime('%H:%M:%S')}  |  Est. ~8-12 min")
+    print("█" * 55)
 
-    for i, res in enumerate(results):
-        name = scraper_configs[i][0].SOURCE
-        if isinstance(res, Exception):
-            print(f"[Runner] {name} failed: {res}")
-        else:
-            print(f"[Runner] {name}: {len(res)} listings")
-            all_listings.extend(res)
+    # ── STEP 1: OLX ──────────────────────────────────────────
+    banner("STEP 1/5  OLX scraper (100 pages, ~4,500 listings)")
+    olx_result = []
+    try:
+        olx_result = await OLXScraper().scrape(max_pages=OLX_PAGES, progress=prog)
+    except Exception as e:
+        print(f"\n  ✗ OLX error: {e}")
+    prog.done = OLX_PAGES + OLX_DETAILS  # normalize
+    prog.finish(f"OLX: {len(olx_result)} listings | {sum(1 for l in olx_result if l.lat)} with coords")
 
-    with_coords = sum(1 for l in all_listings if l.lat)
-    print(f"\n[Runner] {len(all_listings)} listings scraped, {with_coords} with coordinates")
+    # ── STEP 2: RELB ─────────────────────────────────────────
+    banner("STEP 2/5  Realestate.com.lb (~2,607 listings, 131 pages)")
+    relb_result = []
+    try:
+        relb_result = await RealEstateLBScraper().scrape(max_pages=9999, progress=prog)
+    except Exception as e:
+        print(f"\n  ✗ RELB error: {e}")
+    prog.done = OLX_PAGES + OLX_DETAILS + RELB_PAGES + RELB_DETAILS  # normalize
+    prog.finish(f"RELB: {len(relb_result)} listings | {sum(1 for l in relb_result if l.lat)} with coords")
 
-    print(f"\n[Runner] Saving to database...")
+    all_listings = olx_result + relb_result
+    with_coords  = sum(1 for l in all_listings if l.lat)
+    print(f"\n  📊 Total scraped: {len(all_listings)} | {with_coords} with coords ({round(with_coords/max(len(all_listings),1)*100)}%)")
+
+    # ── STEP 3: DB ────────────────────────────────────────────
+    banner("STEP 3/5  Saving to database")
+    prog.set_label("saving to Supabase...")
     saved = await upsert_listings(all_listings)
-    print(f"[Runner] Saved {saved} listings")
+    prog.update(100, "database saved")
+    prog.finish(f"Saved {saved} listings")
 
-    print(f"\n[Runner] Running enrichment...")
+    # ── STEP 4: Enrichment ────────────────────────────────────
+    without = len(all_listings) - with_coords
+    banner(f"STEP 4/5  Enrichment (~{without} need location lookup)")
+    prog.set_label("enriching locations + tags...")
     await run_enrichment()
+    prog.update(150, "enrichment done")
+    prog.finish("Enrichment complete")
 
-    print(f"\n[Runner] Cleaning up unlocatable listings...")
+    # ── STEP 5: Cleanup ───────────────────────────────────────
+    banner("STEP 5/5  Cleanup")
+    prog.set_label("removing unlocatable listings...")
     await cleanup_unlocatable()
+    prog.update(50, "cleanup done")
+    prog.finish("Cleanup complete")
 
-    print(f"\n{'=' * 50}")
-    print(f"Done! {saved} listings saved.")
-    print(f"{'=' * 50}")
+    # ── Final summary ─────────────────────────────────────────
+    print("\n" + "█"*55)
+    print(f"  ✅ ALL DONE in {_fmt(time.time()-run_start)}")
+    print(f"  {saved} listings  |  Finished: {time.strftime('%H:%M:%S')}")
+    print("█"*55 + "\n")
 
 if __name__ == "__main__":
     asyncio.run(run())
