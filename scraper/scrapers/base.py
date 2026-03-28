@@ -20,17 +20,22 @@ class RawListing:
     lat: Optional[float] = None
     lng: Optional[float] = None
     image_url: Optional[str] = None
-    # Extra tag fields (realestate.com.lb pre-scraped)
+    # Pre-scraped tags — no AI needed
     _furnished: Optional[str] = None
     _bedrooms: Optional[int] = None
     _bathrooms: Optional[int] = None
     _amenities: Optional[list] = None
     _floor: Optional[str] = None
+    _condition: Optional[str] = None
+    _payment: Optional[str] = None
+    _building_age: Optional[str] = None
+    _view_type: Optional[list] = None
+    _lifestyle: Optional[list] = None
 
 class BaseScraper:
     SOURCE = ""
 
-    async def scrape(self, max_pages: int = 1) -> list:
+    async def scrape(self, max_pages: int = 1, progress=None) -> list:
         raise NotImplementedError
 
     def parse_price(self, raw: str | None) -> float | None:
