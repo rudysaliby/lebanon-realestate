@@ -30,45 +30,45 @@ def _bar(pct, width=20):
     filled = int(pct / 100 * width)
     return "█" * filled + "░" * (width - filled)
 
-class LineProgress:
-    """Single-line progress tracker for one scraper. Uses ANSI to stay on its line."""
-    def __init__(self, label: str, total: int, line: int):
-        self.label   = label
-        self.total   = total
-        self.done    = 0
-        self.start   = time.time()
-        self.line    = line   # which terminal line (0 = first scraper, 1 = second)
-        self.status  = "starting..."
-        self.done_flag = False
+class ScrapeProgress:
+    """Independent progress tracker for one scraper — renders on its own line."""
+    def __init__(self, name: str, pages: int, details: int):
+        self.name     = name
+        self.pages    = pages
+        self.details  = details
+        self.total    = pages + details
+        self.done     = 0
+        self.start    = time.time()
+        self.status   = "starting..."
+        self.finished = False
 
     def update(self, n=1, status=""):
         self.done = min(self.done + n, self.total)
         if status: self.status = status
-        self._render()
 
-    def finish(self, msg=""):
-        self.done = self.total
-        self.done_flag = True
-        self.status = msg or "done"
-        self._render()
-        # Move to next line after finishing
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-
-    def _render(self):
+    def render(self, move_up=0):
+        """Render this line, optionally moving cursor up first."""
         elapsed = time.time() - self.start
         pct     = int(self.done / self.total * 100) if self.total > 0 else 0
         bar     = _bar(pct)
         rate    = self.done / elapsed if elapsed > 0 else 0
         eta     = (self.total - self.done) / rate if rate > 0 and self.done > 0 else -1
-        eta_str = _fmt(eta) if not self.done_flag else _fmt(elapsed)
-        prefix  = "✓" if self.done_flag else "⟳"
-        line    = (f"\r  {prefix} {self.label:<8} [{bar}] {pct:>3}%"
-                   f"  {_fmt(elapsed)} elapsed  ETA {eta_str}"
-                   f"  {self.status[:45]:<45}")
-        # Use ANSI to move to correct line if needed
+        symbol  = "✓" if self.finished else "⟳"
+        line    = (f"\r  {symbol} {self.name:<5} [{bar}] {pct:>3}%"
+                   f"  {_fmt(elapsed)} elapsed"
+                   f"  ETA {_fmt(eta) if not self.finished else '---'}"
+                   f"  {self.status[:50]:<50}")
+        if move_up:
+            sys.stdout.write(f"\033[{move_up}A")
         sys.stdout.write(line)
+        if move_up:
+            sys.stdout.write(f"\033[{move_up}B\r")
         sys.stdout.flush()
+
+    def finish(self, msg=""):
+        self.done = self.total
+        self.finished = True
+        self.status = msg
 
 async def cleanup_unlocatable():
     async with httpx.AsyncClient(timeout=30) as client:
@@ -79,14 +79,17 @@ async def cleanup_unlocatable():
         )
         return resp.status_code in (200, 204)
 
-def simple_progress(label: str, msg: str):
-    """Simple single-line updater for non-scraper steps."""
-    sys.stdout.write(f"\r  ⟳ {label:<12} {msg:<60}")
-    sys.stdout.flush()
-
-def simple_done(label: str, msg: str):
-    sys.stdout.write(f"\r  ✓ {label:<12} {msg:<60}\n")
-    sys.stdout.flush()
+async def render_loop(olx_prog: ScrapeProgress, relb_prog: ScrapeProgress, stop_event: asyncio.Event):
+    """Background task that redraws both progress lines every 0.5s."""
+    while not stop_event.is_set():
+        # Redraw OLX line (2 lines up)
+        sys.stdout.write("\033[2A")
+        olx_prog.render()
+        sys.stdout.write("\n")
+        relb_prog.render()
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        await asyncio.sleep(0.5)
 
 async def run():
     run_start = time.time()
@@ -97,83 +100,95 @@ async def run():
     print("█" * 57)
 
     # ── STEP 1: Both scrapers in parallel ─────────────────────
-    print("\n── STEP 1/4  Scraping (OLX + Realestate.com.lb in parallel)\n")
+    print("\n── STEP 1/4  Scraping OLX + Realestate.com.lb in parallel\n")
 
-    # Two separate progress trackers — one per scraper
-    # OLX: 100 pages + ~4500 details
-    # RELB: 131 pages + 2607 details
-    olx_prog  = LineProgress("OLX",  100 + 4500, line=0)
-    relb_prog = LineProgress("RELB", 131 + 2607, line=1)
+    OLX_PAGES   = 100
+    OLX_DETAILS = OLX_PAGES * 45
+    RELB_PAGES  = 131
+    RELB_DET    = 2607
 
-    # Print two blank lines to reserve space
-    sys.stdout.write("  ⟳ OLX      [░░░░░░░░░░░░░░░░░░░░]   0%\n")
-    sys.stdout.write("  ⟳ RELB     [░░░░░░░░░░░░░░░░░░░░]   0%\n")
+    olx_prog  = ScrapeProgress("OLX",  OLX_PAGES,  OLX_DETAILS)
+    relb_prog = ScrapeProgress("RELB", RELB_PAGES, RELB_DET)
+
+    # Reserve two lines for progress
+    sys.stdout.write(f"  ⟳ OLX   [{'░'*20}]   0%  starting...\n")
+    sys.stdout.write(f"  ⟳ RELB  [{'░'*20}]   0%  starting...\n")
     sys.stdout.flush()
 
     olx_result  = []
     relb_result = []
-    lock = asyncio.Lock()
+    stop_render = asyncio.Event()
+
+    class OLXCallback:
+        def update(self, n=1, label=""):
+            olx_prog.update(n, label)
+
+    class RELBCallback:
+        def update(self, n=1, label=""):
+            relb_prog.update(n, label)
 
     async def run_olx():
         nonlocal olx_result
         try:
-            # Move cursor up 2 lines to OLX line
-            class OLXProg:
-                def update(self, n=1, label=""):
-                    sys.stdout.write("\033[2A")  # up 2 lines
-                    olx_prog.update(n, label)
-                    sys.stdout.write("\033[2B\r")  # back down 2
-                    sys.stdout.flush()
-            olx_result = await OLXScraper().scrape(max_pages=100, progress=OLXProg())
+            olx_result = await OLXScraper().scrape(max_pages=OLX_PAGES, progress=OLXCallback())
+            olx_prog.finish(f"{len(olx_result)} listings | {sum(1 for l in olx_result if l.lat)} with coords")
         except Exception as e:
-            sys.stdout.write(f"\033[2A\r  ✗ OLX error: {e}\n\033[1B\r")
-            sys.stdout.flush()
+            olx_prog.finish(f"ERROR: {e}")
 
     async def run_relb():
         nonlocal relb_result
-        await asyncio.sleep(0.1)  # tiny offset so OLX prints first
+        await asyncio.sleep(0.2)
         try:
-            # Move cursor up 1 line to RELB line
-            class RELBProg:
-                def update(self, n=1, label=""):
-                    sys.stdout.write("\033[1A")  # up 1 line
-                    relb_prog.update(n, label)
-                    sys.stdout.write("\033[1B\r")  # back down 1
-                    sys.stdout.flush()
-            relb_result = await RealEstateLBScraper().scrape(max_pages=9999, progress=RELBProg())
+            relb_result = await RealEstateLBScraper().scrape(max_pages=9999, progress=RELBCallback())
+            relb_prog.finish(f"{len(relb_result)} listings | {sum(1 for l in relb_result if l.lat)} with coords")
         except Exception as e:
-            sys.stdout.write(f"\033[1A\r  ✗ RELB error: {e}\n\033[1B\r")
-            sys.stdout.flush()
+            relb_prog.finish(f"ERROR: {e}")
 
-    await asyncio.gather(run_olx(), run_relb())
+    # Run both scrapers + render loop in parallel
+    await asyncio.gather(
+        run_olx(),
+        run_relb(),
+        render_loop(olx_prog, relb_prog, stop_render)
+    )
+    stop_render.set()
 
-    # Final status lines
+    # Final render
     sys.stdout.write("\033[2A")
-    olx_prog.finish(f"{len(olx_result)} listings | {sum(1 for l in olx_result if l.lat)} with coords")
-    relb_prog.finish(f"{len(relb_result)} listings | {sum(1 for l in relb_result if l.lat)} with coords")
+    olx_prog.render()
+    sys.stdout.write("\n")
+    relb_prog.render()
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
     all_listings = olx_result + relb_result
     with_coords  = sum(1 for l in all_listings if l.lat)
-    print(f"\n  📊 Total: {len(all_listings)} listings | {with_coords} with coords ({round(with_coords/max(len(all_listings),1)*100)}%)")
+    pct = round(with_coords / max(len(all_listings), 1) * 100)
+    print(f"\n  📊 Total: {len(all_listings)} listings | {with_coords} with coords ({pct}%)")
 
     # ── STEP 2: DB ────────────────────────────────────────────
-    print("\n── STEP 2/4  Saving to database")
-    simple_progress("Database", f"saving {len(all_listings)} listings...")
+    print(f"\n── STEP 2/4  Saving to database")
+    sys.stdout.write(f"  ⟳ Saving {len(all_listings)} listings to Supabase...")
+    sys.stdout.flush()
     saved = await upsert_listings(all_listings)
-    simple_done("Database", f"saved {saved} listings")
+    sys.stdout.write(f"\r  ✓ Saved {saved} listings{' '*30}\n")
+    sys.stdout.flush()
 
     # ── STEP 3: Enrichment ────────────────────────────────────
     without = len(all_listings) - with_coords
     print(f"\n── STEP 3/4  Enrichment (~{without} need location lookup)")
-    simple_progress("Enrichment", "running location + tag enrichment...")
+    sys.stdout.write(f"  ⟳ Running enrichment...")
+    sys.stdout.flush()
     await run_enrichment()
-    simple_done("Enrichment", "complete")
+    sys.stdout.write(f"\r  ✓ Enrichment complete{' '*30}\n")
+    sys.stdout.flush()
 
     # ── STEP 4: Cleanup ───────────────────────────────────────
-    print("\n── STEP 4/4  Cleanup")
-    simple_progress("Cleanup", "removing unlocatable listings...")
+    print(f"\n── STEP 4/4  Cleanup")
+    sys.stdout.write(f"  ⟳ Removing unlocatable listings...")
+    sys.stdout.flush()
     await cleanup_unlocatable()
-    simple_done("Cleanup", "done")
+    sys.stdout.write(f"\r  ✓ Cleanup done{' '*30}\n")
+    sys.stdout.flush()
 
     # ── Summary ───────────────────────────────────────────────
     elapsed = time.time() - run_start
