@@ -213,16 +213,24 @@ class OLXScraper(BaseScraper):
                         desc_m = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)\"', html)
                         description = desc_m.group(1).encode().decode('unicode_escape')[:500] if desc_m else None
 
-                        # Size from params (overrides card)
+                        # Size from params (overrides card) — strip commas first e.g. "2,560" → 2560
                         size_sqm = info["size_sqm"]
                         if params.get("ft"):
-                            try: size_sqm = float(params["ft"])
+                            try: size_sqm = float(params["ft"].replace(",", ""))
                             except: pass
 
                         # Views and lifestyle from title + description
                         title = info["title"] or ""
                         views     = parse_view(title, description or "")
                         lifestyle = parse_lifestyle(title, params)
+
+                        # Use params price if available (more accurate than card price)
+                        if params.get("price"):
+                            try:
+                                parsed_price = float(params["price"].replace(",", ""))
+                                if parsed_price > 0:
+                                    info["price"] = parsed_price
+                            except: pass
 
                         listing = RawListing(
                             source=self.SOURCE,
