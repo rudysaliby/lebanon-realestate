@@ -166,6 +166,7 @@ class RealEstateLBScraper(BaseScraper):
                         if not listing_id:
                             return None
 
+                        await asyncio.sleep(0.05)  # small delay to avoid overwhelming API
                         # Fetch detail for coords + amenities
                         r = await client.get(f"{BASE}/laravel/api/member/properties/{listing_id}", timeout=15)
                         if r.status_code != 200:
