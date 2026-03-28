@@ -267,8 +267,8 @@ class OLXScraper(BaseScraper):
                         if lifestyle: listing._lifestyle  = lifestyle
                         result = listing
 
-                    except:
-                        pass
+                    except Exception as e:
+                        log(f"[OLX] detail error {info['url'][-50:]}: {type(e).__name__}: {e}")
                     finally:
                         async with lock:
                             completed += 1

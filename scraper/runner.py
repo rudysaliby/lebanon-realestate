@@ -210,10 +210,8 @@ async def run():
 
     # ── STEP 2: DB ────────────────────────────────────────────
     print(f"\n── STEP 2/4  Saving to database")
-    sys.stdout.write(f"  ⟳ Saving {len(all_listings)} listings...")
-    sys.stdout.flush()
     saved = await upsert_listings(all_listings)
-    sys.stdout.write(f"\r  ✓ Saved {saved} listings{' '*30}\n")
+    sys.stdout.write(f"\r  ✓ Saved {saved} listings{' '*40}\n")
     sys.stdout.flush()
 
     # ── STEP 3: Enrichment ────────────────────────────────────

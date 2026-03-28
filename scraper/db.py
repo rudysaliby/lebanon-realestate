@@ -92,8 +92,10 @@ async def upsert_listings(listings) -> int:
     if skipped:
         print(f"[DB] Skipped {skipped} listings (no price or no location)")
 
-    chunk_size = 50
+    chunk_size = 200
     total = 0
+    num_chunks = -(-len(rows) // chunk_size)  # ceiling division
+    import sys
     async with httpx.AsyncClient(timeout=60) as client:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i:i + chunk_size]
@@ -107,10 +109,13 @@ async def upsert_listings(listings) -> int:
                 json=chunk,
                 params={"on_conflict": "url"},
             )
+            chunk_num = i // chunk_size + 1
             if resp.status_code in (200, 201):
                 total += len(chunk)
-                print(f"[DB] Saved {len(chunk)} rows (total: {total})")
+                sys.stdout.write(f"\r  ⟳ Saving... chunk {chunk_num}/{num_chunks}  ({total}/{len(rows)} rows){' '*10}")
+                sys.stdout.flush()
             else:
-                print(f"[DB] Error: {resp.status_code} - {resp.text[:300]}")
+                sys.stdout.write(f"\r  [DB] Error chunk {chunk_num}: {resp.status_code} - {resp.text[:200]}\n")
+                sys.stdout.flush()
 
     return total

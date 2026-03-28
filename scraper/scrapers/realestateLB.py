@@ -150,7 +150,7 @@ class RealEstateLBScraper(BaseScraper):
             # bathroom_value, title_en, description_en, images, amenities
             # We only need the detail API for: community coords + amenities list
 
-            det_sem   = asyncio.Semaphore(5)
+            det_sem   = asyncio.Semaphore(10)
             completed = 0
             total_det = len(all_docs)
             lock      = asyncio.Lock()
@@ -166,7 +166,6 @@ class RealEstateLBScraper(BaseScraper):
                         if not listing_id:
                             return None
 
-                        await asyncio.sleep(0.3)  # conservative delay to avoid 429
                         # Fetch detail with retry on 429
                         prop = None
                         for attempt in range(3):
@@ -218,7 +217,8 @@ class RealEstateLBScraper(BaseScraper):
                             amenity_names = [a.get("name_en","") for a in (prop.get("amenities") or [])]
                         features, lifestyle = parse_amenities(amenity_names)
                         views     = parse_view(title, description)
-                        condition = parse_condition(None, title)
+                        completion_status = basic.get("completion_status") or (prop.get("completion_status") if prop else None)
+                        condition = parse_condition(completion_status, title)
 
                         furnished = parse_furnished(basic.get("furnished"))
 

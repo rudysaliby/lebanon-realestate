@@ -256,7 +256,7 @@ async def run_enrichment():
 
         # Process claude_queue in batches of 5
         BATCH_SIZE = 5
-        batch_sem = asyncio.Semaphore(1)  # 1 batch at a time = 5 listings/call
+        batch_sem = asyncio.Semaphore(3)  # 3 batches at a time = 15 listings/call
 
         async def process_batch(batch_listings):
             nonlocal loc_updated, loc_skipped
@@ -276,7 +276,7 @@ async def run_enrichment():
                     continue
 
                 # Step 2: Check cache
-                cached = cache_lookup(area)
+                cached = cache_lookup(area, cache)
                 if cached:
                     updates = {"area": area, "lat": cached["lat"], "lng": cached["lng"], "ai_verified": True}
                     if cached.get("region"):    updates["region"]    = cached["region"]
