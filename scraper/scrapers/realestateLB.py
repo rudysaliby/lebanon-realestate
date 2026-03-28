@@ -14,6 +14,7 @@ Fixes vs old version:
 """
 import asyncio
 import re
+import time
 import httpx
 from .base import BaseScraper, RawListing
 
@@ -124,7 +125,7 @@ async def get_build_hash(client: httpx.AsyncClient) -> str | None:
 class RealEstateLBScraper(BaseScraper):
     SOURCE = "realestate.com.lb"
 
-    async def scrape(self, max_pages=2):
+    async def scrape(self, max_pages=2, progress=None):
         results = []
         async with httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as client:
 
@@ -157,7 +158,8 @@ class RealEstateLBScraper(BaseScraper):
                         max_pages = total_pages
                         print(f"[RELB] {num_found} listings found, {total_pages} pages total")
 
-                    print(f"[RELB] Page {page_num}/{max_pages}: {len(docs)} listings")
+                    if progress:
+                        progress.update(1, f"RELB page {page_num}/{max_pages}")
                     all_docs.extend(docs)
                     await asyncio.sleep(0.3)
                 except Exception as e:
@@ -312,7 +314,23 @@ class RealEstateLBScraper(BaseScraper):
                     except Exception:
                         return None
 
-            tasks = [fetch_detail(doc) for doc in all_docs]
+            total_details = len(all_docs)
+            completed = 0
+            lock = asyncio.Lock()
+
+            async def fetch_tracked(doc):
+                nonlocal completed
+                result = await fetch_detail(doc)
+                async with lock:
+                    completed += 1
+                    if completed % 200 == 0 or completed == total_details:
+                        elapsed = time.time() - t_detail
+                        rate = completed / elapsed if elapsed > 0 else 0
+                        remaining = (total_details - completed) / rate if rate > 0 else 0
+                        print(f"  [RELB] Details: {completed}/{total_details} | {int(rate)}/s | ETA: {int(remaining)}s")
+                return result
+
+            tasks = [fetch_tracked(doc) for doc in all_docs]
             listings = await asyncio.gather(*tasks)
             results = [l for l in listings if l]
 
