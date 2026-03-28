@@ -1,0 +1,38 @@
+{
+  "monteverde": {
+    "lat": 33.845202,
+    "lng": 35.585918,
+    "region": null,
+    "subregion": null
+  },
+  "bolonia": {
+    "lat": 33.881982,
+    "lng": 35.64242,
+    "region": null,
+    "subregion": null
+  },
+  "north lebanon": {
+    "lat": 34.438063,
+    "lng": 35.830823,
+    "region": null,
+    "subregion": null
+  },
+  "brazilia": {
+    "lat": 33.854721,
+    "lng": 35.862285,
+    "region": null,
+    "subregion": null
+  },
+  "monteverdi": {
+    "lat": 33.854721,
+    "lng": 35.862285,
+    "region": null,
+    "subregion": null
+  },
+  "waterfront city": {
+    "lat": 33.932108,
+    "lng": 35.586018,
+    "region": null,
+    "subregion": null
+  }
+}
