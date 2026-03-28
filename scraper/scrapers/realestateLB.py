@@ -150,7 +150,7 @@ class RealEstateLBScraper(BaseScraper):
             # bathroom_value, title_en, description_en, images, amenities
             # We only need the detail API for: community coords + amenities list
 
-            det_sem   = asyncio.Semaphore(10)
+            det_sem   = asyncio.Semaphore(3)
             completed = 0
             total_det = len(all_docs)
             lock      = asyncio.Lock()
@@ -166,12 +166,19 @@ class RealEstateLBScraper(BaseScraper):
                         if not listing_id:
                             return None
 
-                        await asyncio.sleep(0.05)  # small delay to avoid overwhelming API
-                        # Fetch detail for coords + amenities
-                        r = await client.get(f"{BASE}/laravel/api/member/properties/{listing_id}", timeout=15)
-                        if r.status_code != 200:
-                            log(f"  [RELB] detail {listing_id} returned {r.status_code}")
-                        prop = r.json() if r.status_code == 200 else None
+                        await asyncio.sleep(0.3)  # conservative delay to avoid 429
+                        # Fetch detail with retry on 429
+                        prop = None
+                        for attempt in range(3):
+                            r = await client.get(f"{BASE}/laravel/api/member/properties/{listing_id}", timeout=15)
+                            if r.status_code == 200:
+                                prop = r.json()
+                                break
+                            elif r.status_code == 429:
+                                wait = (attempt + 1) * 2  # 2s, 4s, 6s
+                                await asyncio.sleep(wait)
+                            else:
+                                break  # 404 or other error, don't retry
 
                         # ── Coords ────────────────────────────────────────────
                         lat = lng = area = subregion = region = None
