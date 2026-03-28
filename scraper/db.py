@@ -17,13 +17,35 @@ async def upsert_listings(listings) -> int:
 
     rows = []
     seen_urls = set()
+    skipped = 0
 
     for l in listings:
         if not l.url or l.url in seen_urls:
             continue
+
+        # Skip listings without price
+        if not l.price or l.price <= 0:
+            skipped += 1
+            continue
+
+        # Skip listings with no location at all (no coords AND no area AND no location_raw)
+        has_any_location = (
+            l.lat is not None or
+            bool(getattr(l, "area", None)) or
+            bool(getattr(l, "location_raw", None))
+        )
+        if not has_any_location:
+            skipped += 1
+            continue
+
         seen_urls.add(l.url)
 
         has_coords = l.lat is not None and l.lng is not None
+
+        # Validate size — reject implausible values
+        size = getattr(l, "size_sqm", None)
+        if size is not None and not (20 <= size <= 5000):
+            l.size_sqm = None
 
         row = {
             "source":        l.source,
@@ -45,7 +67,6 @@ async def upsert_listings(listings) -> int:
             "image_url":     getattr(l, "image_url", None),
             "is_active":     True,
             "ai_verified":   has_coords,
-            # Mark tags done if we already scraped them directly
             "ai_tags_done":  any([
                 getattr(l, "_furnished", None),
                 getattr(l, "_bedrooms", None),
@@ -54,7 +75,7 @@ async def upsert_listings(listings) -> int:
             ]),
         }
 
-        # All pre-scraped tags — no AI needed for these
+        # All pre-scraped tags — no AI needed
         if getattr(l, "_furnished", None):    row["furnished"]     = l._furnished
         if getattr(l, "_bedrooms", None):     row["bedrooms"]      = l._bedrooms
         if getattr(l, "_bathrooms", None):    row["bathrooms"]     = l._bathrooms
@@ -67,6 +88,9 @@ async def upsert_listings(listings) -> int:
         if getattr(l, "_lifestyle", None):    row["lifestyle"]     = l._lifestyle
 
         rows.append({k: v for k, v in row.items() if v is not None})
+
+    if skipped:
+        print(f"[DB] Skipped {skipped} listings (no price or no location)")
 
     chunk_size = 50
     total = 0
