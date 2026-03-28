@@ -13,11 +13,9 @@ async def run():
     print("Lebanon Real Estate Scraper - Starting")
     print("=" * 50)
 
-    # OLX: 10 pages × 45 cards = ~450 listings
-    # realestate.com.lb: all pages (2598 total, 20/page = 130 pages)
     scraper_configs = [
-        (OLXScraper(), 10),
-        (RealEstateLBScraper(), 130),
+        (OLXScraper(),          10),    # 10 pages × 45 cards = ~450 listings
+        (RealEstateLBScraper(), 9999),  # auto-stops at last page (currently 131 pages / ~2600 listings)
     ]
 
     all_listings = []
@@ -42,7 +40,7 @@ async def run():
     saved = await upsert_listings(all_listings)
     print(f"[Runner] Saved {saved} listings")
 
-    print(f"\n[Runner] Running enrichment for listings without coordinates...")
+    print(f"\n[Runner] Running enrichment...")
     await run_enrichment()
 
     print(f"\n{'=' * 50}")

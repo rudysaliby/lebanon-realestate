@@ -134,7 +134,7 @@ class RealEstateLBScraper(BaseScraper):
             else:
                 print(f"[RELB] Warning: no build hash, using detail API fallback")
 
-            # Fetch listing pages
+            # Fetch listing pages — auto-detect total pages from API
             all_docs = []
             for page_num in range(1, max_pages + 1):
                 print(f"[RELB] Fetching page {page_num}...")
@@ -144,10 +144,20 @@ class RealEstateLBScraper(BaseScraper):
                         "ct": 1, "direction": "asc",
                     })
                     data = resp.json()
-                    docs = data.get("data", {}).get("docs", [])
+                    page_data = data.get("data", {})
+                    docs = page_data.get("docs", [])
                     if not docs:
                         break
-                    print(f"[RELB] Page {page_num}: {len(docs)} listings")
+
+                    # On first page, detect total pages and update max
+                    if page_num == 1:
+                        num_found = page_data.get("numFound", 0)
+                        per_page  = len(docs)
+                        total_pages = -(-num_found // per_page)  # ceiling division
+                        max_pages = total_pages
+                        print(f"[RELB] {num_found} listings found, {total_pages} pages total")
+
+                    print(f"[RELB] Page {page_num}/{max_pages}: {len(docs)} listings")
                     all_docs.extend(docs)
                     await asyncio.sleep(0.3)
                 except Exception as e:
