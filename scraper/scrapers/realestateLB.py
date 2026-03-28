@@ -150,7 +150,7 @@ class RealEstateLBScraper(BaseScraper):
             # bathroom_value, title_en, description_en, images, amenities
             # We only need the detail API for: community coords + amenities list
 
-            det_sem   = asyncio.Semaphore(3)
+            det_sem   = asyncio.Semaphore(5)
             completed = 0
             total_det = len(all_docs)
             lock      = asyncio.Lock()
