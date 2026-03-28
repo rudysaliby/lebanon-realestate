@@ -70,12 +70,16 @@ class ScrapeProgress:
         rate = done / elapsed if elapsed > 0 and done > 0 else 0
         eta  = (total - done) / rate if rate > 0 and done > 0 else -1
         sym  = "✓" if self.finished else "⟳"
-        phase_label = f"pg {self.pages_done}/{self.pages}" if self.phase == "pages" else f"det {self.details_done}/{self.details}"
+        # Show only current phase counter
+        if self.phase == "pages":
+            counter = f"page {self.pages_done}/{self.pages}"
+        else:
+            counter = f"detail {self.details_done}/{self.details}"
 
         line = (f"\r  {sym} {self.name:<5} [{bar}] {pct:>3}%"
                 f"  {_fmt(elapsed)} elapsed"
                 f"  ETA {_fmt(eta) if not self.finished else '---'}"
-                f"  {phase_label}  {self.status[:35]:<35}")
+                f"  {counter:<22}  {self.status[:28]:<28}")
         sys.stdout.write(line)
         sys.stdout.flush()
 
