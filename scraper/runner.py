@@ -14,8 +14,8 @@ async def run():
     print("=" * 50)
 
     scraper_configs = [
-        (OLXScraper(),          10),    # 10 pages × 45 cards = ~450 listings
-        (RealEstateLBScraper(), 9999),  # auto-stops at last page (currently 131 pages / ~2600 listings)
+        (OLXScraper(),          100),   # 100 pages × 45 cards = ~4,500 listings
+        (RealEstateLBScraper(), 9999),  # auto-stops at last page (~2,607 listings)
     ]
 
     all_listings = []
