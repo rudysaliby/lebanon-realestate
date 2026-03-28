@@ -19,7 +19,6 @@ LIST_URL = f"{BASE}/laravel/api/member/properties"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json, text/html",
-    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.realestate.com.lb/",
 }
 
@@ -151,7 +150,7 @@ class RealEstateLBScraper(BaseScraper):
             # bathroom_value, title_en, description_en, images, amenities
             # We only need the detail API for: community coords + amenities list
 
-            det_sem   = asyncio.Semaphore(20)
+            det_sem   = asyncio.Semaphore(10)
             completed = 0
             total_det = len(all_docs)
             lock      = asyncio.Lock()
@@ -168,7 +167,9 @@ class RealEstateLBScraper(BaseScraper):
                             return None
 
                         # Fetch detail for coords + amenities
-                        r = await client.get(f"{BASE}/laravel/api/member/properties/{listing_id}", timeout=12)
+                        r = await client.get(f"{BASE}/laravel/api/member/properties/{listing_id}", timeout=15)
+                        if r.status_code != 200:
+                            log(f"  [RELB] detail {listing_id} returned {r.status_code}")
                         prop = r.json() if r.status_code == 200 else None
 
                         # ── Coords ────────────────────────────────────────────
