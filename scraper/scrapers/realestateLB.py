@@ -19,6 +19,7 @@ LIST_URL = f"{BASE}/laravel/api/member/properties"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json, text/html",
+    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.realestate.com.lb/",
 }
 
@@ -100,7 +101,7 @@ class RealEstateLBScraper(BaseScraper):
 
         async with httpx.AsyncClient(
             headers=HEADERS, timeout=20, follow_redirects=True,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=15)
+            limits=httpx.Limits(max_connections=30, max_keepalive_connections=25)
         ) as client:
 
             # ── Page 1: detect total ──────────────────────────────────────────
@@ -150,7 +151,7 @@ class RealEstateLBScraper(BaseScraper):
             # bathroom_value, title_en, description_en, images, amenities
             # We only need the detail API for: community coords + amenities list
 
-            det_sem   = asyncio.Semaphore(10)
+            det_sem   = asyncio.Semaphore(20)
             completed = 0
             total_det = len(all_docs)
             lock      = asyncio.Lock()
