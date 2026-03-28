@@ -1,22 +1,38 @@
 """
-realestate.com.lb scraper using their Laravel API directly.
-List API:   GET /laravel/api/member/properties?pg=N&sort=listing_level&ct=1&direction=asc
-Detail API: GET /laravel/api/member/properties/{id}
-Returns: area, coords, bedrooms, bathrooms, furnished, amenities — no AI needed
+realestate.com.lb scraper.
+Uses _next/data API for full property details including community coords.
+This endpoint works with ANY reference format (numeric or alphanumeric).
 """
 import asyncio
+import re
 import httpx
 from .base import BaseScraper, RawListing
 
-BASE       = "https://www.realestate.com.lb"
-LIST_URL   = f"{BASE}/laravel/api/member/properties"
-DETAIL_URL = f"{BASE}/laravel/api/member/properties"
+BASE     = "https://www.realestate.com.lb"
+LIST_URL = f"{BASE}/laravel/api/member/properties"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "application/json",
+    "Accept": "application/json, text/html",
     "Referer": "https://www.realestate.com.lb/",
 }
+
+def validate_lb(lat, lng) -> bool:
+    try:
+        return 33.0 <= float(lat) <= 34.7 and 35.1 <= float(lng) <= 36.6
+    except:
+        return False
+
+async def get_build_hash(client: httpx.AsyncClient) -> str | None:
+    """Get Next.js build hash from homepage — needed for _next/data API."""
+    try:
+        resp = await client.get(BASE, timeout=10)
+        m = re.search(r'/_next/static/([^/]+)/_buildManifest', resp.text)
+        if m:
+            return m.group(1)
+    except:
+        pass
+    return None
 
 class RealEstateLBScraper(BaseScraper):
     SOURCE = "realestate.com.lb"
@@ -25,8 +41,15 @@ class RealEstateLBScraper(BaseScraper):
         results = []
         async with httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as client:
 
-            # Fetch listing pages to get IDs
-            all_ids = []
+            # Get build hash for _next/data API
+            build_hash = await get_build_hash(client)
+            if build_hash:
+                print(f"[RELB] Build hash: {build_hash}")
+            else:
+                print(f"[RELB] Warning: could not get build hash, will use detail API fallback")
+
+            # Fetch listing pages
+            all_listings = []
             for page_num in range(1, max_pages + 1):
                 print(f"[RELB] Fetching page {page_num}...")
                 try:
@@ -39,88 +62,128 @@ class RealEstateLBScraper(BaseScraper):
                     if not docs:
                         break
                     print(f"[RELB] Page {page_num}: {len(docs)} listings")
-                    all_ids.extend([(d["id"], d) for d in docs])
-                    await asyncio.sleep(0.5)
+                    all_listings.extend(docs)
+                    await asyncio.sleep(0.3)
                 except Exception as e:
                     print(f"[RELB] Page error: {e}")
                     break
 
-            # Fetch details in parallel (5 at a time)
-            print(f"[RELB] Fetching details for {len(all_ids)} listings...")
-            sem = asyncio.Semaphore(5)
+            print(f"[RELB] Fetching details for {len(all_listings)} listings...")
+            sem = asyncio.Semaphore(8)
 
-            async def fetch_detail(prop_id, basic):
+            async def fetch_detail(basic):
                 async with sem:
                     try:
-                        resp = await client.get(f"{DETAIL_URL}/{prop_id}")
-                        raw = resp.json()
-                        d = raw.get("data") or raw
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.1)
+                        url_path = basic.get("url", "")
+                        url = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
+                        # Ensure /en/ prefix
+                        page_url = url.replace(f"{BASE}/buy-", f"{BASE}/en/buy-").replace(f"{BASE}/rent-", f"{BASE}/en/rent-")
+                        if "/en/" not in page_url:
+                            page_url = page_url.replace(BASE + "/", BASE + "/en/")
 
-                        community = d.get("community") or {}
+                        prop = None
+
+                        # Method 1: _next/data API (best — full data, all references work)
+                        if build_hash:
+                            next_url = f"{BASE}/_next/data/{build_hash}/en{url_path}.json"
+                            try:
+                                resp = await client.get(next_url, timeout=10)
+                                if resp.status_code == 200:
+                                    ndata = resp.json()
+                                    prop = ndata.get("pageProps", {}).get("property")
+                            except:
+                                pass
+
+                        # Method 2: Numeric ID detail API fallback
+                        if not prop and basic.get("id"):
+                            try:
+                                resp = await client.get(f"{BASE}/laravel/api/member/properties/{basic['id']}", timeout=10)
+                                if resp.status_code == 200:
+                                    raw = resp.json()
+                                    prop = raw.get("data") or raw
+                            except:
+                                pass
+
+                        if not prop:
+                            return None
+
+                        # Extract coords: community → district → province
+                        community = prop.get("community") or {}
                         district  = community.get("district") or {}
                         province  = district.get("province") or {}
 
-                        # Coordinates — listing level first, then community
-                        lat = d.get("latitude") or community.get("latitude")
-                        lng = d.get("longitude") or community.get("longitude")
-                        if lat: lat = float(lat)
-                        if lng: lng = float(lng)
-                        if lat and not (33.0 <= lat <= 34.7 and 35.1 <= lng <= 36.6):
-                            lat = lng = None
+                        lat = lng = None
+                        area = subregion = region = None
 
-                        area      = community.get("name_en")
-                        subregion = (district.get("name_en") or "").replace(" district", "").replace(" District", "") or None
-                        region    = (province.get("name_en") or "").replace(" Governorate", "").replace(" governorate", "") or None
+                        if community.get("latitude") and validate_lb(community["latitude"], community.get("longitude",0)):
+                            lat, lng  = float(community["latitude"]), float(community["longitude"])
+                            area      = community.get("name_en")
+                            subregion = district.get("name_en","").replace(" district","").replace(" District","") or None
+                            region    = province.get("name_en","").replace(" Governorate","") or None
 
-                        url_path = basic.get("url") or d.get("url") or f"/buy-properties-lebanon/{d.get('reference','')}"
-                        url = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
+                        elif district.get("latitude") and validate_lb(district["latitude"], district.get("longitude",0)):
+                            lat, lng  = float(district["latitude"]), float(district["longitude"])
+                            subregion = district.get("name_en","").replace(" district","").replace(" District","") or None
+                            region    = province.get("name_en","").replace(" Governorate","") or None
 
-                        images = d.get("images") or basic.get("images") or []
-                        img_url = images[0].get("url") if images else None
+                        elif province.get("latitude") and validate_lb(province["latitude"], province.get("longitude",0)):
+                            lat, lng = float(province["latitude"]), float(province["longitude"])
+                            region   = province.get("name_en","").replace(" Governorate","") or None
 
-                        amenities = [a.get("name_en") for a in (d.get("amenities") or []) if a.get("name_en")]
-                        bedroom   = d.get("bedroom") or {}
-                        bathroom  = d.get("bathroom") or {}
+                        # Area name fallback from URL
+                        if not area:
+                            m = re.search(r'for-(?:sale|rent)-(.+?)-lebanon', url_path)
+                            if m:
+                                area = m.group(1).replace('-', ' ').title()
 
-                        price_type_name = (d.get("price_type") or {}).get("name_en", "USD")
-                        period = "monthly" if "Month" in price_type_name else "sale"
+                        # Listing-level coords (some agents pin exactly)
+                        if not lat and prop.get("latitude") and validate_lb(prop["latitude"], prop.get("longitude",0)):
+                            lat, lng = float(prop["latitude"]), float(prop["longitude"])
 
-                        type_name = (d.get("type") or {}).get("name_en")
+                        # Build listing
+                        images    = prop.get("images") or basic.get("images") or []
+                        img_url   = images[0].get("url") if images else None
+                        amenities = [a.get("name_en") for a in (prop.get("amenities") or []) if a.get("name_en")]
+                        bedroom   = prop.get("bedroom") or {}
+                        bathroom  = prop.get("bathroom") or {}
+                        price_type_name = (prop.get("price_type") or {}).get("name_en", "USD")
+                        period    = "monthly" if "Month" in price_type_name else "sale"
+                        type_name = (prop.get("type") or prop.get("category") or {}).get("name_en")
+                        furnished = prop.get("furnished")
 
                         listing = RawListing(
                             source=self.SOURCE,
                             url=url,
-                            title=d.get("title_en") or basic.get("title_en"),
-                            description=(d.get("description_en") or "")[:500],
-                            price=d.get("price") or basic.get("price"),
+                            title=prop.get("title_en") or basic.get("title_en"),
+                            description=(prop.get("description_en") or "")[:500],
+                            price=prop.get("price") or basic.get("price"),
                             currency="USD",
                             price_period=period,
-                            property_type=self.guess_property_type(d.get("title_en"), type_name),
-                            size_sqm=float(d["area"]) if d.get("area") else None,
-                            location_raw=area or d.get("title_en"),
+                            property_type=self.guess_property_type(prop.get("title_en"), type_name),
+                            size_sqm=float(prop["area"]) if prop.get("area") else None,
+                            location_raw=area or prop.get("title_en"),
                             area=area,
                             subregion=subregion,
                             region=region,
                             lat=lat,
                             lng=lng,
                             image_url=img_url,
-                            _furnished=d.get("furnished"),
-                            _bedrooms=int(bedroom["name_en"]) if bedroom.get("name_en", "").isdigit() else None,
-                            _bathrooms=int(bathroom["name_en"]) if bathroom.get("name_en", "").isdigit() else None,
+                            _furnished=furnished,
+                            _bedrooms=int(bedroom["name_en"]) if str(bedroom.get("name_en","")).isdigit() else None,
+                            _bathrooms=int(bathroom["name_en"]) if str(bathroom.get("name_en","")).isdigit() else None,
                             _amenities=amenities if amenities else None,
-                            _floor=d.get("floor"),
+                            _floor=prop.get("floor"),
                         )
                         return listing
+
                     except Exception as e:
-                        print(f"[RELB] Detail error for {prop_id}: {e}")
                         return None
 
-            tasks = [fetch_detail(pid, basic) for pid, basic in all_ids]
+            tasks = [fetch_detail(doc) for doc in all_listings]
             listings = await asyncio.gather(*tasks)
             results = [l for l in listings if l]
 
         with_coords = sum(1 for r in results if r.lat)
-        print(f"[RELB] Total: {len(results)} listings")
-        print(f"[RELB] With coords: {with_coords}/{len(results)}")
+        print(f"[RELB] Total: {len(results)} | With coords: {with_coords}/{len(results)}")
         return results

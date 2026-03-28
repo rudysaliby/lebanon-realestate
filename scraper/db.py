@@ -19,7 +19,6 @@ async def upsert_listings(listings) -> int:
     seen_urls = set()
 
     for l in listings:
-        # Deduplicate within batch
         if not l.url or l.url in seen_urls:
             continue
         seen_urls.add(l.url)
@@ -27,40 +26,45 @@ async def upsert_listings(listings) -> int:
         has_coords = l.lat is not None and l.lng is not None
 
         row = {
-            "source":       l.source,
-            "url":          l.url,
-            "title":        l.title,
-            "description":  getattr(l, "description", None),
-            "price":        l.price,
-            "currency":     getattr(l, "currency", "USD"),
-            "price_period": getattr(l, "price_period", None),
-            "property_type":getattr(l, "property_type", None),
-            "size_sqm":     getattr(l, "size_sqm", None),
-            "location_raw": getattr(l, "location_raw", None),
-            "area":         getattr(l, "area", None),
-            "subregion":    getattr(l, "subregion", None),
-            "region":       getattr(l, "region", None),
-            "city":         "Beirut",
-            "lat":          l.lat,
-            "lng":          l.lng,
-            "image_url":    getattr(l, "image_url", None),
-            "is_active":    True,
-            # If scraper got real coords, mark verified so enrichment skips it
-            "ai_verified":  has_coords,
-            "ai_tags_done": False,
+            "source":        l.source,
+            "url":           l.url,
+            "title":         l.title,
+            "description":   getattr(l, "description", None),
+            "price":         l.price,
+            "currency":      getattr(l, "currency", "USD"),
+            "price_period":  getattr(l, "price_period", None),
+            "property_type": getattr(l, "property_type", None),
+            "size_sqm":      getattr(l, "size_sqm", None),
+            "location_raw":  getattr(l, "location_raw", None),
+            "area":          getattr(l, "area", None),
+            "subregion":     getattr(l, "subregion", None),
+            "region":        getattr(l, "region", None),
+            "city":          "Beirut",
+            "lat":           l.lat,
+            "lng":           l.lng,
+            "image_url":     getattr(l, "image_url", None),
+            "is_active":     True,
+            "ai_verified":   has_coords,
+            # Mark tags done if we already scraped them directly
+            "ai_tags_done":  any([
+                getattr(l, "_furnished", None),
+                getattr(l, "_bedrooms", None),
+                getattr(l, "_amenities", None),
+                getattr(l, "_condition", None),
+            ]),
         }
 
-        # Pre-scraped tags from realestate.com.lb
-        if getattr(l, "_furnished", None):
-            row["furnished"] = l._furnished
-        if getattr(l, "_bedrooms", None):
-            row["bedrooms"] = l._bedrooms
-        if getattr(l, "_bathrooms", None):
-            row["bathrooms"] = l._bathrooms
-        if getattr(l, "_amenities", None):
-            row["features"] = l._amenities
-        if getattr(l, "_floor", None):
-            row["floor_type"] = l._floor
+        # All pre-scraped tags — no AI needed for these
+        if getattr(l, "_furnished", None):    row["furnished"]     = l._furnished
+        if getattr(l, "_bedrooms", None):     row["bedrooms"]      = l._bedrooms
+        if getattr(l, "_bathrooms", None):    row["bathrooms"]     = l._bathrooms
+        if getattr(l, "_amenities", None):    row["features"]      = l._amenities
+        if getattr(l, "_floor", None):        row["floor_type"]    = l._floor
+        if getattr(l, "_condition", None):    row["condition"]     = l._condition
+        if getattr(l, "_payment", None):      row["payment_type"]  = l._payment
+        if getattr(l, "_building_age", None): row["building_age"]  = l._building_age
+        if getattr(l, "_view_type", None):    row["view_type"]     = l._view_type
+        if getattr(l, "_lifestyle", None):    row["lifestyle"]     = l._lifestyle
 
         rows.append({k: v for k, v in row.items() if v is not None})
 
@@ -70,8 +74,7 @@ async def upsert_listings(listings) -> int:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i:i + chunk_size]
             all_keys = set()
-            for r in chunk:
-                all_keys.update(r.keys())
+            for r in chunk: all_keys.update(r.keys())
             chunk = [{k: r.get(k) for k in all_keys} for r in chunk]
 
             resp = await client.post(
