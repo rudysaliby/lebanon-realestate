@@ -210,7 +210,77 @@ async def run_enrichment():
 
     async with httpx.AsyncClient(timeout=60) as client:
 
-        # ── PHASE 1: Location ─────────────────────────────────────────────────
+    
+    # ── PHASE 0: Price verification ─────────────────────────────────────────
+    price_check = await client.get(
+        f"{SUPABASE_URL}/rest/v1/listings",
+        headers=HEADERS_SB,
+        params={
+            "select": "id,title,description,price,size_sqm,source",
+            "is_active": "eq.true",
+            "price_verified": "eq.false",
+            "limit": "500",
+        }
+    )
+    suspect = price_check.json() if price_check.status_code == 200 else []
+    print(f"\n[Price] {len(suspect)} listings need price verification")
+
+    if suspect:
+        PRICE_SYSTEM = """You are a Lebanese real estate expert. Given a property listing, determine if the price field is:
+1. The TOTAL property price (normal)
+2. The price PER SQM (seller entered wrong field)
+
+Return ONLY JSON: {"is_per_sqm": true/false, "confidence": "high/medium/low"}
+
+Rules:
+- If price < 5000 and size > 50sqm → almost certainly per sqm
+- If price between 5000-15000: check title/description for hints like "/sqm", "per meter", "per sqm"
+- Typical Lebanon apartments: $150,000-$2,000,000 total, $1,500-$5,000/sqm"""
+
+        async def verify_price(listing):
+            title = listing.get("title") or ""
+            desc  = (listing.get("description") or "")[:300]
+            price = listing.get("price")
+            size  = listing.get("size_sqm")
+            prompt = f"Title: {title}\nDescription: {desc}\nPrice: ${price}\nSize: {size} sqm"
+
+            try:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 100,
+                        "system": PRICE_SYSTEM,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                    timeout=15,
+                )
+                if resp.status_code != 200:
+                    return
+                text = resp.json()["content"][0]["text"].strip()
+                text = text.replace("```json","").replace("```","").strip()
+                result = json.loads(text)
+
+                updates = {"price_verified": True}
+                if result.get("is_per_sqm") and size and price:
+                    updates["price"] = round(float(price) * float(size))
+                    print(f"  [Price] Fixed: ${price}/sqm × {size}sqm = ${updates['price']} | {title[:50]}")
+
+                await update_listing(listing["id"], updates, client)
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                print(f"  [Price] Error: {e}")
+
+        price_sem = asyncio.Semaphore(5)
+        async def verify_with_sem(l):
+            async with price_sem:
+                await verify_price(l)
+
+        await asyncio.gather(*[verify_with_sem(l) for l in suspect])
+        print(f"[Price] Verification complete")
+
+    # ── PHASE 1: Location ─────────────────────────────────────────────────
         unverified = await get_pending(client, "ai_verified")
         total = len(unverified)
         print(f"\n[Location] {total} listings need enrichment")
@@ -256,7 +326,7 @@ async def run_enrichment():
 
         # Process claude_queue in batches of 5
         BATCH_SIZE = 5
-        batch_sem = asyncio.Semaphore(3)  # 3 batches at a time = 15 listings/call
+        batch_sem = asyncio.Semaphore(1)  # 1 batch at a time = 5 listings/call
 
         async def process_batch(batch_listings):
             nonlocal loc_updated, loc_skipped
@@ -276,7 +346,7 @@ async def run_enrichment():
                     continue
 
                 # Step 2: Check cache
-                cached = cache_lookup(area, cache)
+                cached = cache_lookup(area)
                 if cached:
                     updates = {"area": area, "lat": cached["lat"], "lng": cached["lng"], "ai_verified": True}
                     if cached.get("region"):    updates["region"]    = cached["region"]

@@ -28,6 +28,13 @@ async def upsert_listings(listings) -> int:
             skipped += 1
             continue
 
+        # Flag listings with suspiciously low price for AI verification
+        # These might be price/sqm entered as total price
+        price_verified = True
+        if (l.price < 15000 and
+            getattr(l, 'price_period', None) != 'monthly'):
+            price_verified = False  # will be checked by enrichment
+
         # Skip listings with no location at all (no coords AND no area AND no location_raw)
         has_any_location = (
             l.lat is not None or
@@ -65,8 +72,9 @@ async def upsert_listings(listings) -> int:
             "lat":           l.lat,
             "lng":           l.lng,
             "image_url":     getattr(l, "image_url", None),
-            "is_active":     True,
-            "ai_verified":   has_coords,
+            "is_active":      True,
+            "ai_verified":    has_coords,
+            "price_verified": price_verified,
             "ai_tags_done":  any([
                 getattr(l, "_furnished", None),
                 getattr(l, "_bedrooms", None),
@@ -92,10 +100,8 @@ async def upsert_listings(listings) -> int:
     if skipped:
         print(f"[DB] Skipped {skipped} listings (no price or no location)")
 
-    chunk_size = 200
+    chunk_size = 50
     total = 0
-    num_chunks = -(-len(rows) // chunk_size)  # ceiling division
-    import sys
     async with httpx.AsyncClient(timeout=60) as client:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i:i + chunk_size]
@@ -109,13 +115,10 @@ async def upsert_listings(listings) -> int:
                 json=chunk,
                 params={"on_conflict": "url"},
             )
-            chunk_num = i // chunk_size + 1
             if resp.status_code in (200, 201):
                 total += len(chunk)
-                sys.stdout.write(f"\r  ⟳ Saving... chunk {chunk_num}/{num_chunks}  ({total}/{len(rows)} rows){' '*10}")
-                sys.stdout.flush()
+                print(f"[DB] Saved {len(chunk)} rows (total: {total})")
             else:
-                sys.stdout.write(f"\r  [DB] Error chunk {chunk_num}: {resp.status_code} - {resp.text[:200]}\n")
-                sys.stdout.flush()
+                print(f"[DB] Error: {resp.status_code} - {resp.text[:300]}")
 
     return total
