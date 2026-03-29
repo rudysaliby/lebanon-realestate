@@ -10,6 +10,7 @@ Strategy:
 import asyncio
 import re
 import time
+import random
 import httpx
 from .base import BaseScraper, RawListing
 
@@ -166,6 +167,9 @@ class RealEstateLBScraper(BaseScraper):
                         if not listing_id:
                             return None
 
+                        # Stagger entry so 10 workers don't all fire simultaneously
+                        await asyncio.sleep(random.uniform(0, 0.5))
+
                         # Fetch detail with retry on 429
                         prop = None
                         for attempt in range(3):
@@ -174,7 +178,7 @@ class RealEstateLBScraper(BaseScraper):
                                 prop = r.json()
                                 break
                             elif r.status_code == 429:
-                                wait = (attempt + 1) * 2  # 2s, 4s, 6s
+                                wait = (attempt + 1) * 2 + random.uniform(0, 1)  # jitter prevents synchronized retries
                                 await asyncio.sleep(wait)
                             else:
                                 break  # 404 or other error, don't retry
