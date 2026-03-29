@@ -299,14 +299,12 @@ class RealEstateLBScraper(BaseScraper):
 
                 return result
 
-            # ── Chunked processing — 10 at a time, 0.5s between chunks ──────
+            # ── Chunked processing — 10 at a time, no artificial delay ─────
             CHUNK = 10
             for i in range(0, len(all_docs), CHUNK):
                 chunk = all_docs[i:i + CHUNK]
                 chunk_results = await asyncio.gather(*[fetch_coords(doc) for doc in chunk])
                 listings.extend([r for r in chunk_results if r])
-                if i + CHUNK < len(all_docs):
-                    await asyncio.sleep(0.5)
 
         with_coords = sum(1 for r in listings if r.lat)
         log(f"[RELB] Done: {len(listings)} listings | {with_coords} with coords")
