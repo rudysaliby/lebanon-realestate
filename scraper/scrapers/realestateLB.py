@@ -10,7 +10,6 @@ Strategy:
 import asyncio
 import re
 import time
-import random
 import httpx
 from .base import BaseScraper, RawListing
 
@@ -172,7 +171,7 @@ class RealEstateLBScraper(BaseScraper):
                             prop = r.json()
                             break
                         elif r.status_code == 429:
-                            wait = (attempt + 1) * 2 + random.uniform(0, 1)
+                            wait = (attempt + 1) * 2  # 2s, 4s, 6s
                             await asyncio.sleep(wait)
                         else:
                             break
@@ -299,8 +298,8 @@ class RealEstateLBScraper(BaseScraper):
 
                 return result
 
-            # ── Chunked processing — 10 at a time, no artificial delay ─────
-            CHUNK = 10
+            # ── Chunked processing — 5 at a time, no pause ──────────────
+            CHUNK = 5
             for i in range(0, len(all_docs), CHUNK):
                 chunk = all_docs[i:i + CHUNK]
                 chunk_results = await asyncio.gather(*[fetch_coords(doc) for doc in chunk])
