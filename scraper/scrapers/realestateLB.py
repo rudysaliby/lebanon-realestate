@@ -151,163 +151,162 @@ class RealEstateLBScraper(BaseScraper):
             # bathroom_value, title_en, description_en, images, amenities
             # We only need the detail API for: community coords + amenities list
 
-            det_sem   = asyncio.Semaphore(10)
             completed = 0
             total_det = len(all_docs)
-            lock      = asyncio.Lock()
             det_start = time.time()
             listings  = []
 
             async def fetch_coords(basic):
                 nonlocal completed
-                async with det_sem:
-                    result = None
-                    try:
-                        listing_id = basic.get("id")
-                        if not listing_id:
-                            return None
+                result = None
+                try:
+                    listing_id = basic.get("id")
+                    if not listing_id:
+                        return None
 
-                        # Stagger entry so 10 workers don't all fire simultaneously
-                        await asyncio.sleep(random.uniform(0, 0.5))
+                    # Fetch detail with retry on 429
+                    prop = None
+                    for attempt in range(3):
+                        r = await client.get(f"{BASE}/laravel/api/member/properties/{listing_id}", timeout=15)
+                        if r.status_code == 200:
+                            prop = r.json()
+                            break
+                        elif r.status_code == 429:
+                            wait = (attempt + 1) * 2 + random.uniform(0, 1)
+                            await asyncio.sleep(wait)
+                        else:
+                            break
 
-                        # Fetch detail with retry on 429
-                        prop = None
-                        for attempt in range(3):
-                            r = await client.get(f"{BASE}/laravel/api/member/properties/{listing_id}", timeout=15)
-                            if r.status_code == 200:
-                                prop = r.json()
-                                break
-                            elif r.status_code == 429:
-                                wait = (attempt + 1) * 2 + random.uniform(0, 1)  # jitter prevents synchronized retries
-                                await asyncio.sleep(wait)
-                            else:
-                                break  # 404 or other error, don't retry
+                    # ── Coords ────────────────────────────────────────────
+                    lat = lng = area = subregion = region = None
 
-                        # ── Coords ────────────────────────────────────────────
-                        lat = lng = area = subregion = region = None
+                    if prop:
+                        community = prop.get("community") or {}
+                        district  = community.get("district") or {}
+                        province  = district.get("province") or {}
 
-                        if prop:
-                            community = prop.get("community") or {}
-                            district  = community.get("district") or {}
-                            province  = district.get("province") or {}
+                        if community.get("latitude") and validate_lb(community["latitude"], community.get("longitude", 0)):
+                            lat, lng  = float(community["latitude"]), float(community["longitude"])
+                            area      = community.get("name_en")
+                            subregion = (district.get("name_en") or "").replace(" district","").replace(" District","") or None
+                            region    = (province.get("name_en") or "").replace(" Governorate","") or None
+                        elif district.get("latitude") and validate_lb(district["latitude"], district.get("longitude", 0)):
+                            lat, lng  = float(district["latitude"]), float(district["longitude"])
+                            subregion = (district.get("name_en") or "").replace(" district","").replace(" District","") or None
+                            region    = (province.get("name_en") or "").replace(" Governorate","") or None
+                        elif province.get("latitude") and validate_lb(province["latitude"], province.get("longitude", 0)):
+                            lat, lng = float(province["latitude"]), float(province["longitude"])
+                            region   = (province.get("name_en") or "").replace(" Governorate","") or None
+                        if not lat and prop.get("latitude") and validate_lb(prop["latitude"], prop.get("longitude", 0)):
+                            lat, lng = float(prop["latitude"]), float(prop["longitude"])
 
-                            if community.get("latitude") and validate_lb(community["latitude"], community.get("longitude", 0)):
-                                lat, lng  = float(community["latitude"]), float(community["longitude"])
-                                area      = community.get("name_en")
-                                subregion = (district.get("name_en") or "").replace(" district","").replace(" District","") or None
-                                region    = (province.get("name_en") or "").replace(" Governorate","") or None
-                            elif district.get("latitude") and validate_lb(district["latitude"], district.get("longitude", 0)):
-                                lat, lng  = float(district["latitude"]), float(district["longitude"])
-                                subregion = (district.get("name_en") or "").replace(" district","").replace(" District","") or None
-                                region    = (province.get("name_en") or "").replace(" Governorate","") or None
-                            elif province.get("latitude") and validate_lb(province["latitude"], province.get("longitude", 0)):
-                                lat, lng = float(province["latitude"]), float(province["longitude"])
-                                region   = (province.get("name_en") or "").replace(" Governorate","") or None
-                            if not lat and prop.get("latitude") and validate_lb(prop["latitude"], prop.get("longitude", 0)):
-                                lat, lng = float(prop["latitude"]), float(prop["longitude"])
+                    # Area from URL if coords lookup failed
+                    url_path = basic.get("url", "")
+                    if not area:
+                        area = extract_area_from_url(url_path)
 
-                        # Area from URL if coords lookup failed
-                        url_path = basic.get("url", "")
-                        if not area:
-                            area = extract_area_from_url(url_path)
+                    # ── All tags from card data (no detail needed) ────────
+                    title       = basic.get("title_en") or ""
+                    description = basic.get("description_en") or ""
 
-                        # ── All tags from card data (no detail needed) ────────
-                        title       = basic.get("title_en") or ""
-                        description = basic.get("description_en") or ""
+                    # Amenities from detail (if available), else empty
+                    amenity_names = []
+                    if prop:
+                        amenity_names = [a.get("name_en","") for a in (prop.get("amenities") or [])]
+                    features, lifestyle = parse_amenities(amenity_names)
+                    views     = parse_view(title, description)
+                    completion_status = basic.get("completion_status") or (prop.get("completion_status") if prop else None)
+                    condition = parse_condition(completion_status, title)
 
-                        # Amenities from detail (if available), else empty
-                        amenity_names = []
-                        if prop:
-                            amenity_names = [a.get("name_en","") for a in (prop.get("amenities") or [])]
-                        features, lifestyle = parse_amenities(amenity_names)
-                        views     = parse_view(title, description)
-                        completion_status = basic.get("completion_status") or (prop.get("completion_status") if prop else None)
-                        condition = parse_condition(completion_status, title)
+                    furnished = parse_furnished(basic.get("furnished"))
 
-                        furnished = parse_furnished(basic.get("furnished"))
+                    # Bedrooms/bathrooms from card
+                    bedrooms  = basic.get("bedroom_value")
+                    bathrooms = basic.get("bathroom_value")
+                    try: bedrooms  = int(bedrooms)  if bedrooms  else None
+                    except: bedrooms = None
+                    try: bathrooms = int(bathrooms) if bathrooms else None
+                    except: bathrooms = None
 
-                        # Bedrooms/bathrooms from card
-                        bedrooms  = basic.get("bedroom_value")
-                        bathrooms = basic.get("bathroom_value")
-                        try: bedrooms  = int(bedrooms)  if bedrooms  else None
-                        except: bedrooms = None
-                        try: bathrooms = int(bathrooms) if bathrooms else None
-                        except: bathrooms = None
+                    # Floor from detail
+                    floor_type = None
+                    if prop and prop.get("floor") is not None:
+                        try:
+                            f = int(prop["floor"])
+                            if f <= 0:  floor_type = "ground"
+                            elif f >= 8: floor_type = "high-floor"
+                        except: pass
 
-                        # Floor from detail
-                        floor_type = None
-                        if prop and prop.get("floor") is not None:
-                            try:
-                                f = int(prop["floor"])
-                                if f <= 0:  floor_type = "ground"
-                                elif f >= 8: floor_type = "high-floor"
-                            except: pass
+                    # Price period
+                    price_type_id = basic.get("price_type_id", 1)
+                    period = "monthly" if price_type_id == 2 else "sale"
 
-                        # Price period
-                        price_type_id = basic.get("price_type_id", 1)
-                        period = "monthly" if price_type_id == 2 else "sale"
+                    # Type
+                    type_name = None
+                    if prop:
+                        type_name = (prop.get("type") or prop.get("category") or {}).get("name_en")
 
-                        # Type
-                        type_name = None
-                        if prop:
-                            type_name = (prop.get("type") or prop.get("category") or {}).get("name_en")
+                    # Image from card
+                    images  = basic.get("images") or []
+                    img_url = images[0].get("url") if images else None
 
-                        # Image from card
-                        images  = basic.get("images") or []
-                        img_url = images[0].get("url") if images else None
+                    price = basic.get("price")
+                    if not price:
+                        return None
 
-                        price = basic.get("price")
-                        if not price:
-                            return None
+                    url = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
 
-                        url = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
+                    listing = RawListing(
+                        source=self.SOURCE,
+                        url=url,
+                        title=title,
+                        description=description[:500],
+                        price=price,
+                        currency="USD",
+                        price_period=period,
+                        property_type=self.guess_property_type(title, type_name),
+                        size_sqm=float(basic["area"]) if basic.get("area") else None,
+                        location_raw=area or title,
+                        area=area,
+                        subregion=subregion,
+                        region=region,
+                        lat=lat,
+                        lng=lng,
+                        image_url=img_url,
+                        _furnished=furnished,
+                        _bedrooms=bedrooms,
+                        _bathrooms=bathrooms,
+                        _amenities=features if features else None,
+                        _floor=floor_type,
+                        _condition=condition,
+                    )
+                    if views:     listing._view_type = views
+                    if lifestyle: listing._lifestyle  = lifestyle
+                    result = listing
 
-                        listing = RawListing(
-                            source=self.SOURCE,
-                            url=url,
-                            title=title,
-                            description=description[:500],
-                            price=price,
-                            currency="USD",
-                            price_period=period,
-                            property_type=self.guess_property_type(title, type_name),
-                            size_sqm=float(basic["area"]) if basic.get("area") else None,
-                            location_raw=area or title,
-                            area=area,
-                            subregion=subregion,
-                            region=region,
-                            lat=lat,
-                            lng=lng,
-                            image_url=img_url,
-                            _furnished=furnished,
-                            _bedrooms=bedrooms,
-                            _bathrooms=bathrooms,
-                            _amenities=features if features else None,
-                            _floor=floor_type,
-                            _condition=condition,
-                        )
-                        if views:     listing._view_type = views
-                        if lifestyle: listing._lifestyle  = lifestyle
-                        result = listing
+                except Exception as e:
+                    log(f"  [RELB] error {basic.get('id')}: {type(e).__name__}: {e}")
 
-                    except Exception as e:
-                        log(f"  [RELB] error {basic.get('id')}: {type(e).__name__}: {e}")
+                finally:
+                    completed += 1
+                    if progress:
+                        progress.update(1, f"RELB details {completed}/{total_det}")
+                    elif completed % 200 == 0 or completed == total_det:
+                        elapsed = time.time() - det_start
+                        rate    = completed / elapsed if elapsed > 0 else 0
+                        eta     = (total_det - completed) / rate if rate > 0 else 0
+                        log(f"  [RELB] {completed}/{total_det} | {int(rate)}/s | ETA {int(eta)}s")
 
-                    finally:
-                        async with lock:
-                            completed += 1
-                            if progress:
-                                progress.update(1, f"RELB details {completed}/{total_det}")
-                            elif completed % 200 == 0 or completed == total_det:
-                                elapsed = time.time() - det_start
-                                rate    = completed / elapsed if elapsed > 0 else 0
-                                eta     = (total_det - completed) / rate if rate > 0 else 0
-                                log(f"  [RELB] {completed}/{total_det} | {int(rate)}/s | ETA {int(eta)}s")
+                return result
 
-                    return result
-
-            all_results = await asyncio.gather(*[fetch_coords(doc) for doc in all_docs])
-            listings = [l for l in all_results if l]
+            # ── Chunked processing — 10 at a time, 0.5s between chunks ──────
+            CHUNK = 10
+            for i in range(0, len(all_docs), CHUNK):
+                chunk = all_docs[i:i + CHUNK]
+                chunk_results = await asyncio.gather(*[fetch_coords(doc) for doc in chunk])
+                listings.extend([r for r in chunk_results if r])
+                if i + CHUNK < len(all_docs):
+                    await asyncio.sleep(0.5)
 
         with_coords = sum(1 for r in listings if r.lat)
         log(f"[RELB] Done: {len(listings)} listings | {with_coords} with coords")
