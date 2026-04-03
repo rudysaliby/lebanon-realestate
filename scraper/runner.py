@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from scrapers.olx import OLXScraper
-from scrapers.realestateLB import RealEstateLBScraper
 from db import upsert_listings
 from enrich_all import run_enrichment
 
@@ -31,7 +30,6 @@ def _bar(pct, width=20):
     return "█" * filled + "░" * (width - filled)
 
 class ScrapeProgress:
-    """Two-phase progress tracker per scraper."""
     def __init__(self, name, total_pages):
         self.name           = name
         self.total_pages    = total_pages
@@ -44,32 +42,22 @@ class ScrapeProgress:
         self.finished       = False
         self.summary        = ""
 
-    def page_done(self, listings_on_page: int):
-        self.pages_done     += 1
-        self.listings_found += listings_on_page
-
-    def detail_done(self, success: bool):
-        self.details_done += 1
-        if success: self.details_ok += 1
-
-    def start_details(self):
-        self.phase = "details"
+    def update(self, n=1, label=""):
+        import re as _re
+        if "detail" in label.lower():
+            if self.phase == "pages":
+                self.phase = "details"
+            self.details_done += n
+            if "error" not in label.lower(): self.details_ok += n
+        else:
+            m = _re.search(r"found:(\d+)", label)
+            count = int(m.group(1)) if m else 45
+            self.pages_done     += n
+            self.listings_found += count
 
     def finish(self, summary=""):
         self.finished = True
         self.summary  = summary
-
-    def update(self, n=1, label=""):
-        """Called by scraper progress callbacks."""
-        import re as _re
-        if "detail" in label.lower():
-            if self.phase == "pages":
-                self.start_details()
-            self.detail_done("error" not in label.lower())
-        else:
-            m = _re.search(r"found:(\d+)", label)
-            count = int(m.group(1)) if m else 20
-            self.page_done(count)
 
     def render(self):
         elapsed = time.time() - self.start
@@ -81,21 +69,21 @@ class ScrapeProgress:
                     f"  {_fmt(elapsed)}"
                     f"  {self.summary:<60}")
         elif self.phase == "pages":
-            pct  = int(self.pages_done / self.total_pages * 100) if self.total_pages > 0 else 0
+            pct  = int(self.pages_done / max(self.total_pages, 1) * 100)
             bar  = _bar(pct)
             rate = self.pages_done / elapsed if elapsed > 0 and self.pages_done > 0 else 0
             eta  = (self.total_pages - self.pages_done) / rate if rate > 0 else -1
             line = (f"\r  {sym} {self.name:<5} [{bar}] {pct:>3}%"
                     f"  {_fmt(elapsed)} elapsed  ETA {_fmt(eta)}"
                     f"  page {self.pages_done}/{self.total_pages}"
-                    f"  {self.listings_found} found{' '*15}")
+                    f"  {self.listings_found} found{' '*10}")
         else:
-            total = self.listings_found
-            pct   = int(self.details_done / total * 100) if total > 0 else 0
+            total = max(self.listings_found, 1)
+            pct   = int(self.details_done / total * 100)
             bar   = _bar(pct)
             rate  = self.details_done / elapsed if elapsed > 0 and self.details_done > 0 else 0
             eta   = (total - self.details_done) / rate if rate > 0 else -1
-            ok_pct = int(self.details_ok / self.details_done * 100) if self.details_done > 0 else 0
+            ok_pct = int(self.details_ok / max(self.details_done, 1) * 100)
             line  = (f"\r  {sym} {self.name:<5} [{bar}] {pct:>3}%"
                      f"  {_fmt(elapsed)} elapsed  ETA {_fmt(eta)}"
                      f"  detail {self.details_done}/{total}"
@@ -105,7 +93,6 @@ class ScrapeProgress:
         sys.stdout.flush()
 
 async def cleanup_dead_listings():
-    """Delete listings that still have no coords AND no area after enrichment."""
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.delete(
             f"{SUPABASE_URL}/rest/v1/listings",
@@ -114,13 +101,11 @@ async def cleanup_dead_listings():
         )
         return resp.status_code in (200, 204)
 
-async def render_loop(progs, stop_event):
-    n = len(progs)
+async def render_loop(prog, stop_event):
     while not stop_event.is_set():
-        sys.stdout.write(f"\033[{n}A")
-        for p in progs:
-            p.render()
-            sys.stdout.write("\n")
+        sys.stdout.write("\033[1A")
+        prog.render()
+        sys.stdout.write("\n")
         sys.stdout.flush()
         await asyncio.sleep(0.5)
 
@@ -128,60 +113,38 @@ async def run():
     run_start = time.time()
 
     print("█" * 57)
-    print("  🏠 LEBANON REAL ESTATE SCRAPER")
+    print("  🏠 LEBANON REAL ESTATE SCRAPER  (OLX only)")
     print(f"  Started: {time.strftime('%H:%M:%S')}")
     print("█" * 57)
-    print("\n── STEP 1/4  Scraping OLX + Realestate.com.lb in parallel\n")
+    print("\n── STEP 1/4  Scraping all OLX property categories\n")
 
-    OLX_PAGES  = 100
-    RELB_PAGES = 131
-
-    olx_prog  = ScrapeProgress("OLX",  OLX_PAGES)
-    relb_prog = ScrapeProgress("RELB", RELB_PAGES)
+    # Total pages across all categories
+    TOTAL_PAGES = 659 + 165 + 172 + 78 + 29 + 17  # 1120
+    prog = ScrapeProgress("OLX", TOTAL_PAGES)
 
     sys.stdout.write(f"  ⟳ OLX   [{'░'*20}]   0%  starting...\n")
-    sys.stdout.write(f"  ⟳ RELB  [{'░'*20}]   0%  starting...\n")
     sys.stdout.flush()
 
     olx_result  = []
-    relb_result = []
     stop_render = asyncio.Event()
 
     async def run_olx():
         nonlocal olx_result
         try:
-            olx_result = await OLXScraper().scrape(max_pages=OLX_PAGES, progress=olx_prog)
+            olx_result = await OLXScraper().scrape(max_pages=500, progress=prog)
             with_coords = sum(1 for l in olx_result if l.lat)
             suspect     = sum(1 for l in olx_result if l._price_suspect)
-            scanned     = olx_prog.listings_found
+            scanned     = prog.listings_found
             saved_pct   = round(len(olx_result) / max(scanned, 1) * 100)
-            olx_prog.finish(
+            prog.finish(
                 f"scanned {scanned}  →  saved {len(olx_result)} ({saved_pct}%)"
-                f"  |  {with_coords} coords"
-                f"  |  {suspect} suspect prices"
+                f"  |  {with_coords} coords  |  {suspect} suspect prices"
             )
         except Exception as e:
-            olx_prog.finish(f"ERROR: {e}")
+            prog.finish(f"ERROR: {e}")
 
-    async def run_relb():
-        nonlocal relb_result
-        await asyncio.sleep(0.2)
-        try:
-            relb_result = await RealEstateLBScraper().scrape(max_pages=9999, progress=relb_prog)
-            with_coords = sum(1 for l in relb_result if l.lat)
-            suspect     = sum(1 for l in relb_result if l._price_suspect)
-            scanned     = relb_prog.listings_found
-            saved_pct   = round(len(relb_result) / max(scanned, 1) * 100)
-            relb_prog.finish(
-                f"scanned {scanned}  →  saved {len(relb_result)} ({saved_pct}%)"
-                f"  |  {with_coords} coords"
-                f"  |  {suspect} suspect prices"
-            )
-        except Exception as e:
-            relb_prog.finish(f"ERROR: {e}")
-
-    scraper_task = asyncio.gather(run_olx(), run_relb())
-    render_task  = asyncio.create_task(render_loop([olx_prog, relb_prog], stop_render))
+    scraper_task = asyncio.create_task(run_olx())
+    render_task  = asyncio.create_task(render_loop(prog, stop_render))
     await scraper_task
     stop_render.set()
     render_task.cancel()
@@ -189,27 +152,26 @@ async def run():
     except asyncio.CancelledError: pass
 
     # Final render
-    sys.stdout.write("\033[2A")
-    olx_prog.render();  sys.stdout.write("\n")
-    relb_prog.render(); sys.stdout.write("\n")
+    sys.stdout.write("\033[1A")
+    prog.render()
+    sys.stdout.write("\n")
     sys.stdout.flush()
 
-    all_listings = olx_result + relb_result
-    with_coords  = sum(1 for l in all_listings if l.lat)
-    pct = round(with_coords / max(len(all_listings), 1) * 100)
-    print(f"\n  📊 Total: {len(all_listings)} | {with_coords} with coords ({pct}%)")
+    with_coords = sum(1 for l in olx_result if l.lat)
+    pct = round(with_coords / max(len(olx_result), 1) * 100)
+    print(f"\n  📊 Total: {len(olx_result)} | {with_coords} with coords ({pct}%)")
 
     # ── STEP 2: DB ────────────────────────────────────────────────────────────
     print(f"\n── STEP 2/4  Saving to database")
-    sys.stdout.write(f"  ⟳ Saving {len(all_listings)} listings...")
+    sys.stdout.write(f"  ⟳ Saving {len(olx_result)} listings...")
     sys.stdout.flush()
-    saved = await upsert_listings(all_listings)
+    saved = await upsert_listings(olx_result)
     sys.stdout.write(f"\r  ✓ Saved {saved} listings{' '*30}\n")
     sys.stdout.flush()
 
     # ── STEP 3: Enrichment ────────────────────────────────────────────────────
-    without = len(all_listings) - with_coords
-    suspect = sum(1 for l in all_listings if l._price_suspect)
+    without = len(olx_result) - with_coords
+    suspect = sum(1 for l in olx_result if l._price_suspect)
     print(f"\n── STEP 3/4  Enrichment ({without} need location | {suspect} need price check)")
     sys.stdout.write(f"  ⟳ Running enrichment...")
     sys.stdout.flush()

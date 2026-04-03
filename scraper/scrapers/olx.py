@@ -1,22 +1,29 @@
 """
-OLX Lebanon scraper — clean systematic version.
+OLX Lebanon scraper — all property categories.
 
-Extracts from HTML page JSON:
-MANDATORY:
-- price (params.price, comma-stripped)
-- size_sqm (params.ft, comma-stripped)  
-- property_type (params.property_type)
-- lat/lng (geography.lat/lng — precise GPS)
-- region, area (location hierarchy)
-- price_period (always "sale" for buy section)
+Categories scraped in parallel:
+- Apartments & Villas For Sale
+- Apartments & Villas For Rent
+- Land For Sale
+- Commercial For Sale
+- Chalets For Sale
+- Buildings For Sale
 
-OPTIONAL:
-- bedrooms (params.rooms)
-- bathrooms (params.bathrooms)
-- furnished (params.furnished)
-- condition, floor, payment, building_age
+Speed:
+- Playwright for listing pages (OLX blocks httpx for listing pages)
+  - 5 pages in parallel per category
+  - Block images/CSS for faster loads
+  - Extract URLs via regex from HTML (no DOM queries)
+- httpx for detail pages (40 parallel across all categories)
 
-Speed: Playwright for listing pages (OLX blocks httpx), httpx for details (40 parallel)
+Filtering:
+- location[0] must be "Lebanon" → drops non-Lebanon listings
+- lat/lng must be in Lebanon bounds
+- price must be > 0
+
+Tags extracted from params JSON (zero AI):
+MANDATORY: price, size_sqm, property_type, lat/lng, region, area, price_period
+OPTIONAL: bedrooms, bathrooms, furnished, condition, floor, payment, building_age
 """
 import asyncio
 import re
@@ -25,7 +32,15 @@ import httpx
 from playwright.async_api import async_playwright
 from .base import BaseScraper, RawListing
 
-LISTING_URL = "https://www.olx.com.lb/properties/apartments-villas-for-sale/"
+CATEGORIES = [
+    {"url": "https://www.olx.com.lb/properties/apartments-villas-for-sale/", "period": "sale",    "max_pages": 659},
+    {"url": "https://www.olx.com.lb/properties/apartments-villas-for-rent/", "period": "monthly", "max_pages": 165},
+    {"url": "https://www.olx.com.lb/properties/land-for-sale/",              "period": "sale",    "max_pages": 172},
+    {"url": "https://www.olx.com.lb/properties/commercial-for-sale/",        "period": "sale",    "max_pages": 78},
+    {"url": "https://www.olx.com.lb/properties/chalet-for-sale/",            "period": "sale",    "max_pages": 29},
+    {"url": "https://www.olx.com.lb/properties/buildings-multiple-units-for-sale/", "period": "sale", "max_pages": 17},
+]
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml",
@@ -36,13 +51,11 @@ HEADERS = {
 # ── Parsers ───────────────────────────────────────────────────────────────────
 
 def parse_params(html: str) -> dict:
-    """Extract all OLX listing params from HTML JSON."""
     return {k: v for k, v in re.findall(
         r'"attribute"\s*:\s*"([^"]+)"\s*,\s*"formattedValue"\s*:\s*"([^"]+)"', html
     )}
 
 def parse_geo(html: str) -> tuple | None:
-    """Extract precise GPS coordinates from geography JSON."""
     m = re.search(r'"geography"\s*:\s*\{"lat"\s*:([\d.]+)\s*,\s*"lng"\s*:([\d.]+)', html)
     if m:
         lat, lng = float(m.group(1)), float(m.group(2))
@@ -51,13 +64,15 @@ def parse_geo(html: str) -> tuple | None:
     return None
 
 def parse_location(html: str) -> tuple:
-    """Extract [Lebanon, Region, Area] location hierarchy."""
+    """Returns (is_lebanon, region, area)."""
     m = re.search(r'"location"\s*:\s*\[(.*?)\]', html, re.DOTALL)
-    if not m: return None, None
+    if not m: return False, None, None
     names = re.findall(r'"name"\s*:\s*"([^"]+)"', m.group(1))
+    if not names or names[0] != "Lebanon":
+        return False, None, None  # Not Lebanon
     region = names[1] if len(names) >= 2 else None
     area   = names[2] if len(names) >= 3 else None
-    return region, area
+    return True, region, area
 
 def parse_price(raw: str | None) -> float | None:
     if not raw: return None
@@ -125,91 +140,96 @@ def parse_lifestyle(title: str) -> list:
     if "investment" in text: tags.append("investment")
     return list(set(tags))
 
-# ── Page scraping ─────────────────────────────────────────────────────────────
-
-async def scrape_page(context, page_num: int, sem) -> list[str]:
-    """Scrape one OLX listing page, return list of ad URLs."""
-    async with sem:
-        page = None
-        try:
-            page = await context.new_page()
-
-            async def block_resources(route):
-                if route.request.resource_type in ("image", "font", "media", "stylesheet"):
-                    await route.abort()
-                else:
-                    await route.continue_()
-
-            await page.route("**/*", block_resources)
-            await page.goto(
-                f"{LISTING_URL}?page={page_num}",
-                wait_until="domcontentloaded",
-                timeout=30000
-            )
-
-            # Articles are in static HTML — no wait needed
-            html = await page.content()
-            await page.close()
-
-            # Extract URLs via regex — much faster than DOM querying
-            urls = list(dict.fromkeys([
-                f"https://www.olx.com.lb{m}"
-                for m in re.findall(r'href="(/ad/[^"?]+)"', html)
-            ]))
-            return urls
-
-        except Exception as e:
-            if page:
-                try: await page.close()
-                except: pass
-            return []
+def extract_urls_from_html(html: str) -> list[str]:
+    """Fast regex URL extraction — no DOM queries needed."""
+    return list(dict.fromkeys([
+        f"https://www.olx.com.lb{m}"
+        for m in re.findall(r'href="(/ad/[^"?]+)"', html)
+        if "/ad/" in m
+    ]))
 
 # ── Main scraper ──────────────────────────────────────────────────────────────
 
 class OLXScraper(BaseScraper):
     SOURCE = "olx"
 
-    async def scrape(self, max_pages: int = 10, progress=None) -> list:
-        listing_urls = []
+    async def scrape(self, max_pages: int = 500, progress=None) -> list:
+        all_urls = []  # list of (url, period)
 
         def log(msg):
             if not progress: print(msg)
 
         # ── Step 1: Playwright for listing pages ──────────────────────────────
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+        # Each category scraped sequentially, pages in parallel within category
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
             ctx = await browser.new_context(
                 user_agent=HEADERS["User-Agent"],
                 viewport={"width": 1280, "height": 800}
             )
 
-            sem = asyncio.Semaphore(5)
+            for cat in CATEGORIES:
+                cat_url    = cat["url"]
+                period     = cat["period"]
+                cat_pages  = min(max_pages, cat["max_pages"])
+                cat_sem    = asyncio.Semaphore(5)
+                cat_name   = cat_url.split("/properties/")[1].rstrip("/")
+                cat_urls   = []
 
-            async def fetch_page_tracked(page_num):
-                urls = await scrape_page(ctx, page_num, sem)
+                async def scrape_cat_page(page_num, cat_url=cat_url, period=period):
+                    async with cat_sem:
+                        page = None
+                        try:
+                            page = await ctx.new_page()
+
+                            async def block(route):
+                                if route.request.resource_type in ("image","font","media","stylesheet"):
+                                    await route.abort()
+                                else:
+                                    await route.continue_()
+
+                            await page.route("**/*", block)
+                            await page.goto(f"{cat_url}?page={page_num}", wait_until="domcontentloaded", timeout=30000)
+                            html = await page.content()
+                            await page.close()
+                            urls = extract_urls_from_html(html)
+                            return [(u, period) for u in urls]
+                        except:
+                            if page:
+                                try: await page.close()
+                                except: pass
+                            return []
+
+                page_results = await asyncio.gather(
+                    *[scrape_cat_page(p) for p in range(1, cat_pages + 1)]
+                )
+
+                seen = set()
+                for page_urls in page_results:
+                    for url, per in page_urls:
+                        if url not in seen:
+                            seen.add(url)
+                            cat_urls.append((url, per))
+
+                all_urls.extend(cat_urls)
                 if progress:
-                    progress.update(1, f"OLX listing pages {page_num}/{max_pages} found:{len(urls)}")
-                else:
-                    log(f"[OLX] Page {page_num}/{max_pages}: {len(urls)} listings")
-                return urls
+                    progress.update(cat_pages, f"OLX listing pages {cat_name} found:{len(cat_urls)}")
+                log(f"[OLX] {cat_name}: {cat_pages} pages → {len(cat_urls)} listings")
 
-            page_results = await asyncio.gather(
-                *[fetch_page_tracked(p) for p in range(1, max_pages + 1)]
-            )
             await browser.close()
 
-        # Deduplicate
+        # Deduplicate across categories
         seen = set()
-        for urls in page_results:
-            for url in urls:
-                if url not in seen:
-                    seen.add(url)
-                    listing_urls.append(url)
+        unique_urls = []
+        for url, period in all_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_urls.append((url, period))
 
-        total = len(listing_urls)
-        log(f"[OLX] {total} unique listings, fetching details...")
+        total = len(unique_urls)
+        log(f"[OLX] {total} unique listings across all categories, fetching details...")
 
-        # ── Step 2: httpx for detail pages ────────────────────────────────────
+        # ── Step 2: httpx for all detail pages — 40 parallel ─────────────────
         results   = []
         sem_det   = asyncio.Semaphore(40)
         completed = 0
@@ -221,7 +241,7 @@ class OLXScraper(BaseScraper):
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=40)
         ) as client:
 
-            async def fetch_detail(url: str) -> RawListing | None:
+            async def fetch_detail(url: str, period: str) -> RawListing | None:
                 nonlocal completed
                 async with sem_det:
                     result = None
@@ -231,27 +251,30 @@ class OLXScraper(BaseScraper):
                             return None
                         html = resp.text
 
-                        # Extract all data
-                        params      = parse_params(html)
-                        geo         = parse_geo(html)
-                        region, area = parse_location(html)
+                        # ── Location — must be Lebanon ────────────────────────
+                        is_lebanon, region, area = parse_location(html)
+                        if not is_lebanon:
+                            return None  # Drop non-Lebanon listings
 
-                        # ── MANDATORY fields ──────────────────────────────────
+                        params = parse_params(html)
+                        geo    = parse_geo(html)
+
+                        # ── MANDATORY: price ──────────────────────────────────
                         price = parse_price(params.get("price"))
                         if not price:
-                            return None  # No price → drop
+                            return None
 
+                        # ── MANDATORY: size ───────────────────────────────────
                         size_sqm = parse_size(params.get("ft"))
+
+                        # ── MANDATORY: property type ──────────────────────────
                         prop_type = self.guess_property_type(None, params.get("property_type"))
 
-                        # lat/lng from GPS (OLX has precise coords)
-                        lat = geo[0] if geo else None
-                        lng = geo[1] if geo else None
-
-                        # ── Title & description ───────────────────────────────
+                        # ── Title ─────────────────────────────────────────────
                         title_m = re.search(r'<h1[^>]*>([^<]+)</h1>', html)
-                        title = title_m.group(1).strip() if title_m else url.split("/")[-1]
+                        title = title_m.group(1).strip() if title_m else ""
 
+                        # ── Description ───────────────────────────────────────
                         desc_m = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"', html)
                         description = None
                         if desc_m:
@@ -262,12 +285,10 @@ class OLXScraper(BaseScraper):
                         img_m = re.search(r'"url"\s*:\s*"(https://[^"]+\.(?:jpg|jpeg|webp)[^"]*)"', html)
                         img_url = img_m.group(1) if img_m else None
 
-                        # ── Tags ──────────────────────────────────────────────
+                        # ── Optional tags ─────────────────────────────────────
                         views     = parse_view(title, description or "")
                         lifestyle = parse_lifestyle(title)
-
-                        # Price suspect check
-                        price_suspect = price < 15000 and size_sqm and size_sqm > 0
+                        price_suspect = (price < 15000 and period == "sale" and size_sqm)
 
                         listing = RawListing(
                             source=self.SOURCE,
@@ -276,14 +297,14 @@ class OLXScraper(BaseScraper):
                             description=description,
                             price=price,
                             currency="USD",
-                            price_period="sale",
+                            price_period=period,
                             property_type=prop_type,
                             size_sqm=size_sqm,
-                            location_raw=f"{area}, {region}" if area else title,
+                            location_raw=f"{area}, {region}" if area else (region or "Lebanon"),
                             area=area,
                             region=region,
-                            lat=lat,
-                            lng=lng,
+                            lat=geo[0] if geo else None,
+                            lng=geo[1] if geo else None,
                             image_url=img_url,
                             _furnished=parse_furnished(params.get("furnished")),
                             _bedrooms=int(params["rooms"]) if params.get("rooms","").isdigit() else None,
@@ -305,17 +326,17 @@ class OLXScraper(BaseScraper):
                             completed += 1
                             if progress:
                                 progress.update(1, f"OLX details {completed}/{total}")
-                            elif completed % 500 == 0 or completed == total:
+                            elif completed % 1000 == 0 or completed == total:
                                 elapsed = time.time() - det_start
                                 rate = completed / elapsed if elapsed > 0 else 0
                                 eta = (total - completed) / rate if rate > 0 else 0
                                 log(f"  [OLX] {completed}/{total} | {int(rate)}/s | ETA {int(eta)}s")
                     return result
 
-            listings = await asyncio.gather(*[fetch_detail(url) for url in listing_urls])
+            listings = await asyncio.gather(*[fetch_detail(url, per) for url, per in unique_urls])
             results = [l for l in listings if l]
 
-        with_coords = sum(1 for r in results if r.lat)
+        with_coords   = sum(1 for r in results if r.lat)
         price_suspect = sum(1 for r in results if r._price_suspect)
-        log(f"[OLX] Done: {len(results)} listings | {with_coords} with coords | {price_suspect} suspect prices")
+        log(f"[OLX] Done: {len(results)} | {with_coords} with coords | {price_suspect} suspect prices")
         return results
