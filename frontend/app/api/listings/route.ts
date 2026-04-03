@@ -24,7 +24,17 @@ async function fetchAllListings(filters: any) {
     if (filters.minPrice)   query = query.gte('price', parseFloat(filters.minPrice))
     if (filters.maxPrice)   query = query.lte('price', parseFloat(filters.maxPrice))
     if (filters.period && filters.period !== 'all') query = query.eq('price_period', filters.period)
-    if (filters.type && filters.type !== 'all')     query = query.eq('property_type', filters.type)
+    // type_group maps to property_type values
+    if (filters.type_group && filters.type_group !== 'all') {
+      if (filters.type_group === 'residential') {
+        query = query.in('property_type', ['apartment', 'villa', 'chalet'])
+      } else if (filters.type_group === 'land') {
+        query = query.eq('property_type', 'land')
+      } else if (filters.type_group === 'commercial') {
+        query = query.in('property_type', ['commercial', 'shop', 'building'])
+      }
+    }
+    if (filters.type && filters.type !== 'all') query = query.eq('property_type', filters.type)
     if (filters.area && filters.area !== 'all')     query = query.eq('area', filters.area)
     if (filters.region && filters.region !== 'all') query = query.eq('region', filters.region)
     if (filters.furnished && filters.furnished !== 'all') query = query.eq('furnished', filters.furnished)
@@ -53,6 +63,7 @@ export async function GET(req: NextRequest) {
     minPrice:  searchParams.get('min_price'),
     maxPrice:  searchParams.get('max_price'),
     period:    searchParams.get('period'),
+    type_group: searchParams.get('type_group'),
     type:      searchParams.get('type'),
     area:      searchParams.get('area'),
     region:    searchParams.get('region'),

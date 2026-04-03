@@ -1,310 +1,274 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { TrendingUp, TrendingDown, Minus, ExternalLink, BarChart2, MapPin, Home, DollarSign, Tag, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { Lock, TrendingDown, TrendingUp, BarChart2 } from 'lucide-react'
+import type { Mode } from '@/app/page'
 
-function fmt(n: number | null) {
-  if (!n) return 'N/A'
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
+function median(arr: number[]) {
+  if (!arr.length) return 0
+  const s = [...arr].sort((a,b) => a-b)
+  const m = Math.floor(s.length / 2)
+  return s.length % 2 ? s[m] : (s[m-1]+s[m])/2
 }
 
-function fmtK(n: number) {
-  return n >= 1000 ? `$${Math.round(n/1000)}k` : `$${n}`
-}
-
-// ── Stat Card ─────────────────────────────────────────────────────────────────
-function StatCard({ label, value, sub, color, icon: Icon }: any) {
-  return (
-    <div style={{ background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, padding:'16px 20px', flex:1, minWidth:140 }}>
-      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
-        <div style={{ width:28, height:28, borderRadius:8, background:`${color}20`, display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <Icon size={14} color={color} />
-        </div>
-        <span style={{ fontSize:11, color:'rgba(255,255,255,0.4)', textTransform:'uppercase', letterSpacing:'0.05em' }}>{label}</span>
-      </div>
-      <div style={{ fontSize:24, fontWeight:700, fontFamily:"'Syne',sans-serif", color:'#f0ede6' }}>{value}</div>
-      {sub && <div style={{ fontSize:11, color:'rgba(255,255,255,0.3)', marginTop:4 }}>{sub}</div>}
-    </div>
-  )
-}
-
-// ── Horizontal Bar Chart ───────────────────────────────────────────────────────
-function BarChart({ data, valueKey, labelKey, colorFn, unit='' }: any) {
-  if (!data?.length) return <div style={{ color:'rgba(255,255,255,0.3)', fontSize:13, padding:'20px 0', textAlign:'center' }}>No data yet</div>
-  const max = Math.max(...data.map((d: any) => d[valueKey]))
-  return (
-    <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-      {data.map((item: any, i: number) => {
-        const val = item[valueKey]
-        const pct = max > 0 ? (val / max) * 100 : 0
-        const color = colorFn ? colorFn(pct, i) : '#22c55e'
-        return (
-          <div key={i} style={{ display:'flex', alignItems:'center', gap:10 }}>
-            <span style={{ fontSize:11, color:'rgba(255,255,255,0.6)', minWidth:110, textAlign:'right', flexShrink:0 }}>
-              {item[labelKey]}
-            </span>
-            <div style={{ flex:1, height:8, background:'rgba(255,255,255,0.06)', borderRadius:4, overflow:'hidden' }}>
-              <div style={{ height:'100%', width:`${pct}%`, background:color, borderRadius:4, transition:'width 0.6s ease' }} />
-            </div>
-            <span style={{ fontSize:11, color:'rgba(255,255,255,0.5)', minWidth:80, textAlign:'right' }}>
-              {unit}{val.toLocaleString()}
-            </span>
-            <span style={{ fontSize:10, color:'rgba(255,255,255,0.2)', minWidth:20 }}>
-              {item.listing_count && `${item.listing_count}L`}
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Price Distribution ─────────────────────────────────────────────────────────
-function PriceDistribution({ data }: { data: any[] }) {
-  if (!data?.length) return null
-  const max = Math.max(...data.map(d => d.count))
-  const colors = ['#4ade80','#22c55e','#fbbf24','#f87171']
-  return (
-    <div style={{ display:'flex', alignItems:'flex-end', gap:8, height:100 }}>
-      {data.map((d, i) => {
-        const h = max > 0 ? (d.count / max) * 80 : 0
-        return (
-          <div key={i} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
-            <span style={{ fontSize:10, color:'rgba(255,255,255,0.5)' }}>{d.count}</span>
-            <div style={{ width:'100%', height:h, background:colors[i], borderRadius:'4px 4px 0 0', minHeight: d.count > 0 ? 4 : 0 }} />
-            <span style={{ fontSize:10, color:'rgba(255,255,255,0.4)', textAlign:'center', lineHeight:1.2 }}>{d.label}</span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Valuation Donut ────────────────────────────────────────────────────────────
-function ValuationBreakdown({ summary }: { summary: any }) {
-  if (!summary) return null
-  const { undervaluedCount, fairCount, overvaluedCount, totalListings } = summary
-  const segments = [
-    { label: 'Undervalued', count: undervaluedCount, color: '#4ade80' },
-    { label: 'Fair', count: fairCount, color: '#818cf8' },
-    { label: 'Overvalued', count: overvaluedCount, color: '#f87171' },
-  ]
-  return (
-    <div style={{ display:'flex', gap:16, alignItems:'center' }}>
-      {segments.map(s => (
-        <div key={s.label} style={{ flex:1, background:'rgba(255,255,255,0.04)', borderRadius:10, padding:'12px 14px', textAlign:'center' }}>
-          <div style={{ fontSize:22, fontWeight:700, fontFamily:"'Syne',sans-serif", color:s.color }}>{s.count}</div>
-          <div style={{ fontSize:10, color:'rgba(255,255,255,0.4)', marginTop:2 }}>{s.label}</div>
-          <div style={{ fontSize:10, color:'rgba(255,255,255,0.25)' }}>
-            {totalListings > 0 ? `${Math.round(s.count/totalListings*100)}%` : '0%'}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ── Deal Card ─────────────────────────────────────────────────────────────────
-function DealCard({ deal }: { deal: any }) {
-  const isUnder = deal.valuation === 'undervalued'
-  const isOver = deal.valuation === 'overvalued'
-  const borderColor = isUnder ? 'rgba(34,197,94,0.3)' : isOver ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.07)'
-
-  return (
-    <div style={{ background:'#1a1a1a', border:`1px solid ${borderColor}`, borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column' }}>
-      {deal.image_url && (
-        <div style={{ position:'relative', height:130, overflow:'hidden' }}>
-          <img src={deal.image_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}
-            onError={e => { (e.target as HTMLImageElement).style.display='none' }} />
-          <div style={{ position:'absolute', inset:0, background:'linear-gradient(to bottom, transparent 50%, #1a1a1a)' }} />
-          {isUnder && (
-            <div style={{ position:'absolute', top:8, right:8, background:'rgba(34,197,94,0.9)', borderRadius:6, padding:'3px 8px', fontSize:11, fontWeight:700, color:'#fff', display:'flex', alignItems:'center', gap:4 }}>
-              <ArrowDownRight size={11} /> -{deal.discount}%
-            </div>
-          )}
-          {isOver && (
-            <div style={{ position:'absolute', top:8, right:8, background:'rgba(239,68,68,0.9)', borderRadius:6, padding:'3px 8px', fontSize:11, fontWeight:700, color:'#fff', display:'flex', alignItems:'center', gap:4 }}>
-              <ArrowUpRight size={11} /> +{Math.abs(deal.discount)}%
-            </div>
-          )}
-        </div>
-      )}
-      <div style={{ padding:'12px 14px', flex:1, display:'flex', flexDirection:'column', gap:8 }}>
-        <div style={{ fontSize:12, color:'rgba(255,255,255,0.6)', lineHeight:1.3 }}>
-          {deal.title?.slice(0,65)}{deal.title?.length > 65 ? '…' : ''}
-        </div>
-        <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-          <span style={{ fontSize:17, fontWeight:700, fontFamily:"'Syne',sans-serif", color:'#f0ede6' }}>
-            {fmt(deal.price)}
-          </span>
-          {deal.price_period === 'monthly' && <span style={{ fontSize:10, color:'rgba(255,255,255,0.3)' }}>/mo</span>}
-        </div>
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-          {deal.area && <span style={{ fontSize:11, color:'#22c55e' }}>📍 {deal.area}</span>}
-          {deal.size_sqm && <span style={{ fontSize:11, color:'rgba(255,255,255,0.35)' }}>{deal.size_sqm}m²</span>}
-          {deal.bedrooms && <span style={{ fontSize:11, color:'rgba(255,255,255,0.35)' }}>🛏 {deal.bedrooms}</span>}
-        </div>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-          <div>
-            <div style={{ fontSize:12, color:'rgba(255,255,255,0.5)' }}>${Number(deal.price_per_sqm).toLocaleString()}/m²</div>
-            {deal.area_avg_psqm && <div style={{ fontSize:10, color:'rgba(255,255,255,0.25)' }}>avg ${Number(deal.area_avg_psqm).toLocaleString()}/m²</div>}
-          </div>
-          <a href={deal.url} target="_blank" rel="noopener noreferrer"
-            style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#22c55e', textDecoration:'none', background:'rgba(34,197,94,0.1)', padding:'5px 10px', borderRadius:8 }}>
-            View <ExternalLink size={10} />
-          </a>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Main Component ─────────────────────────────────────────────────────────────
-export default function InsightsTab() {
-  const [data, setData] = useState<any>(null)
+export default function InsightsTab({ mode, user, onSignIn }: {
+  mode: Mode, user: any, onSignIn: () => void
+}) {
+  const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all'|'undervalued'|'fair'|'overvalued'>('all')
-  const [period, setPeriod] = useState('sale')
-  const [propType, setPropType] = useState('all')
+  const [activeView, setActiveView] = useState<'market' | 'deals'>('market')
 
   useEffect(() => {
-    setLoading(true)
-    fetch(`/api/deals?period=${period}&type=${propType}`)
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [period, propType])
+    const fetchData = async () => {
+      setLoading(true)
+      const p = new URLSearchParams()
+      p.set('period', mode.period)
+      p.set('type_group', mode.type)
+      const res = await fetch(`/api/listings?${p}`)
+      const geojson = await res.json()
+      const features = geojson?.features || []
 
-  const deals = (data?.deals || []).filter((d: any) =>
-    filter === 'all' ? true : d.valuation === filter
-  )
+      // Aggregate by area
+      const areas: Record<string, { area: string, region: string, ppsqms: number[], prices: number[], count: number }> = {}
+      for (const f of features) {
+        const p = f.properties
+        const key = p.area || p.region || 'Unknown'
+        if (!areas[key]) areas[key] = { area: p.area || key, region: p.region || '', ppsqms: [], prices: [], count: 0 }
+        areas[key].count++
+        if (p.price && p.size_sqm) areas[key].ppsqms.push(p.price / p.size_sqm)
+        if (p.price) areas[key].prices.push(p.price)
+      }
 
-  const pill = (label: string, val: string, current: string, set: (v: any) => void, color='#22c55e') => (
-    <button onClick={() => set(val)} style={{
-      padding:'5px 12px', borderRadius:20, fontSize:12, cursor:'pointer',
-      background: current === val ? `${color}25` : 'rgba(255,255,255,0.05)',
-      border: `1px solid ${current === val ? `${color}60` : 'rgba(255,255,255,0.1)'}`,
-      color: current === val ? color : 'rgba(255,255,255,0.5)',
-      fontFamily:"'DM Sans',sans-serif",
-    }}>{label}</button>
-  )
+      const result = Object.values(areas)
+        .filter(a => a.ppsqms.length >= 5) // min 5 data points
+        .map(a => ({
+          ...a,
+          median_ppsqm: Math.round(median(a.ppsqms)),
+          median_price: Math.round(median(a.prices)),
+        }))
+        .sort((a,b) => b.median_ppsqm - a.median_ppsqm)
 
-  if (loading) return (
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'rgba(255,255,255,0.3)', fontFamily:"'DM Sans',sans-serif", flexDirection:'column', gap:12 }}>
-      <BarChart2 size={24} color="rgba(255,255,255,0.2)" />
-      Loading market data...
-    </div>
-  )
+      setData(result)
+      setLoading(false)
+    }
+    fetchData()
+  }, [mode])
 
-  const { summary, areaAnalytics, regionAnalytics, priceDistribution } = data || {}
+  if (!user) {
+    return (
+      <div style={{
+        height:'100%', display:'flex', alignItems:'center', justifyContent:'center',
+        flexDirection:'column', gap:16, background:'#0a0a0a', fontFamily:"'DM Sans',sans-serif",
+      }}>
+        <div style={{
+          background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)',
+          borderRadius:16, padding:'40px', textAlign:'center', maxWidth:380,
+        }}>
+          <Lock size={32} color="rgba(255,255,255,0.2)" style={{ marginBottom:16 }} />
+          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:700, color:'#f0ede6', marginBottom:8 }}>
+            Insights require an account
+          </h2>
+          <p style={{ fontSize:14, color:'rgba(255,255,255,0.4)', lineHeight:1.6, marginBottom:24 }}>
+            Sign in free to access market analytics, price benchmarks, and the deal finder.
+          </p>
+          <button onClick={onSignIn} style={{
+            background:'#1a6b3a', border:'none', borderRadius:9,
+            padding:'12px 28px', fontSize:14, fontWeight:600, color:'#fff', cursor:'pointer', width:'100%',
+          }}>Create free account</button>
+          <p style={{ fontSize:11, color:'rgba(255,255,255,0.2)', marginTop:12 }}>
+            Explorer & Analyst plans unlock advanced features
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const maxPpsqm = data[0]?.median_ppsqm || 1
+
+  // Deal finder — top undervalued listings
+  const deals = data.filter(a => a.count >= 5).map(a => ({
+    ...a,
+    // Areas with lowest price vs their region median
+  }))
 
   return (
-    <div style={{ height:'100%', overflowY:'auto', padding:'20px 24px', fontFamily:"'DM Sans',sans-serif", background:'#111' }}>
+    <div style={{ height:'100%', overflow:'auto', background:'#0a0a0a', fontFamily:"'DM Sans',sans-serif" }}>
+      <div style={{ maxWidth:1100, margin:'0 auto', padding:'24px 24px 48px' }}>
 
-      {/* Header */}
-      <div style={{ marginBottom:20 }}>
-        <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:700, color:'#f0ede6', margin:'0 0 4px' }}>
-          Market Intelligence
-        </h2>
-        <p style={{ fontSize:13, color:'rgba(255,255,255,0.4)', margin:0 }}>
-          Lebanon real estate · {summary?.totalListings || 0} listings analyzed
-        </p>
-      </div>
-
-      {/* Filters row */}
-      <div style={{ display:'flex', gap:8, marginBottom:20, flexWrap:'wrap', alignItems:'center' }}>
-        <span style={{ fontSize:11, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.05em' }}>Period</span>
-        {pill('For Sale', 'sale', period, setPeriod)}
-        {pill('For Rent', 'monthly', period, setPeriod)}
-        {pill('All', 'all', period, setPeriod)}
-        <div style={{ width:1, height:20, background:'rgba(255,255,255,0.1)', margin:'0 4px' }} />
-        <span style={{ fontSize:11, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.05em' }}>Type</span>
-        {pill('Apartment', 'apartment', propType, setPropType, '#60a5fa')}
-        {pill('Villa', 'villa', propType, setPropType, '#60a5fa')}
-        {pill('All', 'all', propType, setPropType, '#60a5fa')}
-      </div>
-
-      {/* Summary stats */}
-      <div style={{ display:'flex', gap:12, marginBottom:20, flexWrap:'wrap' }}>
-        <StatCard label="Listings" value={summary?.totalListings || 0} sub="with price data" color="#22c55e" icon={Home} />
-        <StatCard label="Avg $/m²" value={summary?.avgPsqm ? `$${summary.avgPsqm.toLocaleString()}` : 'N/A'} sub="across all areas" color="#60a5fa" icon={DollarSign} />
-        <StatCard label="Best Deals" value={summary?.undervaluedCount || 0} sub=">15% below area avg" color="#4ade80" icon={TrendingDown} />
-        <StatCard label="Overvalued" value={summary?.overvaluedCount || 0} sub=">15% above area avg" color="#f87171" icon={TrendingUp} />
-      </div>
-
-      {/* Valuation breakdown + Price distribution */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:20 }}>
-        <div style={{ background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', borderRadius:14, padding:20 }}>
-          <div style={{ fontSize:13, fontWeight:500, color:'#f0ede6', marginBottom:14, display:'flex', alignItems:'center', gap:8 }}>
-            <Minus size={14} color="#818cf8" /> Valuation Breakdown
-          </div>
-          <ValuationBreakdown summary={summary} />
-        </div>
-        <div style={{ background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', borderRadius:14, padding:20 }}>
-          <div style={{ fontSize:13, fontWeight:500, color:'#f0ede6', marginBottom:14, display:'flex', alignItems:'center', gap:8 }}>
-            <DollarSign size={14} color="#fbbf24" /> Price Range Distribution
-          </div>
-          <PriceDistribution data={priceDistribution} />
-        </div>
-      </div>
-
-      {/* Area price chart */}
-      <div style={{ background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', borderRadius:14, padding:20, marginBottom:20 }}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <BarChart2 size={14} color="#22c55e" />
-            <span style={{ fontSize:13, fontWeight:500, color:'#f0ede6' }}>Avg Price/m² by Area</span>
-          </div>
-          <span style={{ fontSize:11, color:'rgba(255,255,255,0.3)' }}>min 2 listings</span>
-        </div>
-        <BarChart
-          data={areaAnalytics}
-          labelKey="area"
-          valueKey="avg_price_per_sqm"
-          unit="$"
-          colorFn={(pct: number) => pct > 75 ? '#f87171' : pct > 50 ? '#fbbf24' : pct > 25 ? '#60a5fa' : '#4ade80'}
-        />
-      </div>
-
-      {/* Region chart */}
-      {regionAnalytics?.length > 0 && (
-        <div style={{ background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', borderRadius:14, padding:20, marginBottom:20 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
-            <MapPin size={14} color="#a78bfa" />
-            <span style={{ fontSize:13, fontWeight:500, color:'#f0ede6' }}>Avg Price/m² by Region</span>
-          </div>
-          <BarChart
-            data={regionAnalytics}
-            labelKey="region"
-            valueKey="avg_price_per_sqm"
-            unit="$"
-            colorFn={() => '#a78bfa'}
-          />
-        </div>
-      )}
-
-      {/* Deals section */}
-      <div style={{ marginBottom:16 }}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <Tag size={14} color="rgba(255,255,255,0.4)" />
-            <span style={{ fontSize:13, fontWeight:500, color:'#f0ede6' }}>Listings</span>
-            <span style={{ fontSize:11, color:'rgba(255,255,255,0.3)' }}>({deals.length})</span>
-          </div>
-          <div style={{ display:'flex', gap:6 }}>
-            {pill('All', 'all', filter, setFilter)}
-            {pill('Best Deals 🟢', 'undervalued', filter, setFilter)}
-            {pill('Fair 🟣', 'fair', filter, setFilter)}
-            {pill('Overvalued 🔴', 'overvalued', filter, setFilter, '#f87171')}
-          </div>
+        {/* Header */}
+        <div style={{ marginBottom:28 }}>
+          <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:26, fontWeight:700, color:'#f0ede6', letterSpacing:'-0.03em', marginBottom:4 }}>
+            Market Intelligence
+          </h1>
+          <p style={{ fontSize:13, color:'rgba(255,255,255,0.35)' }}>
+            {mode.period === 'sale' ? 'For Sale' : 'For Rent'} · {mode.type.charAt(0).toUpperCase()+mode.type.slice(1)} ·
+            Based on {data.reduce((s,a) => s+a.count, 0).toLocaleString()} listings with price/sqm data
+          </p>
         </div>
 
-        {deals.length === 0 ? (
-          <div style={{ textAlign:'center', color:'rgba(255,255,255,0.3)', padding:40, fontSize:14, background:'#1a1a1a', borderRadius:14 }}>
-            No listings match this filter — try "All" or run the scraper for more data.
+        {/* View toggle */}
+        <div style={{ display:'flex', gap:8, marginBottom:28 }}>
+          {[
+            { id:'market' as const, label:'Market Overview', icon:'📊' },
+            { id:'deals' as const, label:'Deal Finder', icon:'🎯' },
+          ].map(v => (
+            <button key={v.id} onClick={() => setActiveView(v.id)} style={{
+              padding:'8px 18px', borderRadius:8, fontSize:13, fontWeight:600,
+              cursor:'pointer', display:'flex', alignItems:'center', gap:6,
+              background: activeView===v.id ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${activeView===v.id ? 'rgba(74,222,128,0.3)' : 'rgba(255,255,255,0.08)'}`,
+              color: activeView===v.id ? '#4ade80' : 'rgba(255,255,255,0.5)',
+            }}>{v.icon} {v.label}</button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign:'center', padding:'60px 0', color:'rgba(255,255,255,0.3)' }}>
+            Computing market data...
           </div>
+        ) : activeView === 'market' ? (
+
+          <>
+            {/* Summary cards */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:32 }}>
+              {[
+                { label:'Areas tracked', value: data.length, suffix:'' },
+                { label:'Median $/m²', value: Math.round(median(data.map(a=>a.median_ppsqm))).toLocaleString(), prefix:'$' },
+                { label:'Most active', value: data.sort((a,b)=>b.count-a.count)[0]?.area || '-', suffix:'' },
+                { label:'Highest value', value: data[0]?.area || '-', suffix:'' },
+              ].map(({ label, value, prefix, suffix }) => (
+                <div key={label} style={{
+                  background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.07)',
+                  borderRadius:12, padding:'16px 18px',
+                }}>
+                  <div style={{ fontSize:20, fontWeight:700, fontFamily:"'Syne',sans-serif", color:'#f0ede6' }}>
+                    {prefix}{value}{suffix}
+                  </div>
+                  <div style={{ fontSize:11, color:'rgba(255,255,255,0.3)', marginTop:4 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Bar chart — median price/sqm per area */}
+            <div style={{
+              background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)',
+              borderRadius:14, padding:'20px 24px',
+            }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+                <h3 style={{ fontFamily:"'Syne',sans-serif", fontSize:15, fontWeight:700, color:'#f0ede6' }}>
+                  Median Price per m² by Area
+                </h3>
+                <span style={{ fontSize:11, color:'rgba(255,255,255,0.25)' }}>min 5 listings required</span>
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {data.slice(0, 25).map((a, i) => {
+                  const pct = (a.median_ppsqm / maxPpsqm) * 100
+                  const color = pct > 75 ? '#f87171' : pct > 50 ? '#facc15' : '#4ade80'
+                  return (
+                    <div key={a.area} style={{ display:'flex', alignItems:'center', gap:12 }}>
+                      <div style={{ width:140, fontSize:12, color:'rgba(255,255,255,0.7)', textAlign:'right', flexShrink:0 }}>
+                        {a.area}
+                      </div>
+                      <div style={{ flex:1, height:24, background:'rgba(255,255,255,0.05)', borderRadius:4, overflow:'hidden' }}>
+                        <div style={{
+                          width:`${pct}%`, height:'100%',
+                          background:`linear-gradient(90deg, ${color}99, ${color})`,
+                          borderRadius:4, transition:'width 0.8s ease',
+                          display:'flex', alignItems:'center', paddingLeft:8,
+                          minWidth:60,
+                        }}>
+                          <span style={{ fontSize:11, fontWeight:600, color:'rgba(0,0,0,0.8)', whiteSpace:'nowrap' }}>
+                            ${a.median_ppsqm.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                      <span style={{ fontSize:11, color:'rgba(255,255,255,0.25)', width:60, textAlign:'right', flexShrink:0 }}>
+                        {a.count} listings
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </>
+
         ) : (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(250px, 1fr))', gap:14 }}>
-            {deals.map((deal: any) => <DealCard key={deal.id} deal={deal} />)}
+
+          /* DEAL FINDER */
+          <div>
+            <div style={{ marginBottom:20 }}>
+              <h3 style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:700, color:'#f0ede6', marginBottom:4 }}>
+                🎯 Best Value Areas
+              </h3>
+              <p style={{ fontSize:13, color:'rgba(255,255,255,0.35)' }}>
+                Areas ranked by value — comparing median price/m² vs regional average.
+                Only areas with 5+ listings shown.
+              </p>
+            </div>
+
+            {/* Regional comparison */}
+            {(() => {
+              // Group by region
+              const regions: Record<string, typeof data> = {}
+              data.forEach(a => {
+                const r = a.region || 'Other'
+                if (!regions[r]) regions[r] = []
+                regions[r].push(a)
+              })
+
+              return Object.entries(regions).map(([region, areas]) => {
+                const regionMedian = median(areas.map(a => a.median_ppsqm))
+                const sorted = [...areas].sort((a,b) => a.median_ppsqm - b.median_ppsqm)
+
+                return (
+                  <div key={region} style={{
+                    background:'rgba(255,255,255,0.03)',
+                    border:'1px solid rgba(255,255,255,0.07)',
+                    borderRadius:14, padding:'20px', marginBottom:16,
+                  }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+                      <h4 style={{ fontFamily:"'Syne',sans-serif", fontSize:14, fontWeight:700, color:'rgba(255,255,255,0.8)', margin:0 }}>
+                        {region}
+                      </h4>
+                      <span style={{ fontSize:11, color:'rgba(255,255,255,0.3)' }}>
+                        Region median: ${Math.round(regionMedian).toLocaleString()}/m²
+                      </span>
+                    </div>
+
+                    <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                      {sorted.map(a => {
+                        const diff = ((a.median_ppsqm - regionMedian) / regionMedian) * 100
+                        const isBelow = diff < 0
+                        const absDiff = Math.abs(Math.round(diff))
+                        return (
+                          <div key={a.area} style={{
+                            display:'flex', alignItems:'center', justifyContent:'space-between',
+                            padding:'10px 14px', borderRadius:8,
+                            background: isBelow ? 'rgba(74,222,128,0.05)' : 'rgba(248,113,113,0.05)',
+                            border: `1px solid ${isBelow ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)'}`,
+                          }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                              <span style={{ fontSize:14 }}>{isBelow ? <TrendingDown size={14} color="#4ade80" /> : <TrendingUp size={14} color="#f87171" />}</span>
+                              <div>
+                                <div style={{ fontSize:13, fontWeight:600, color:'#f0ede6' }}>{a.area}</div>
+                                <div style={{ fontSize:11, color:'rgba(255,255,255,0.3)' }}>{a.count} listings</div>
+                              </div>
+                            </div>
+                            <div style={{ textAlign:'right' }}>
+                              <div style={{ fontSize:14, fontWeight:700, color: isBelow ? '#4ade80' : '#f87171' }}>
+                                {isBelow ? '▼' : '▲'} {absDiff}%
+                              </div>
+                              <div style={{ fontSize:11, color:'rgba(255,255,255,0.4)' }}>
+                                ${a.median_ppsqm.toLocaleString()}/m²
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })
+            })()}
           </div>
         )}
       </div>
