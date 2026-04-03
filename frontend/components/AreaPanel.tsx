@@ -32,7 +32,9 @@ export default function AreaPanel({ areaData, mode, onClose, user, onSignIn }: {
   const listings = areaData?.listings || []
   const total = areaData?.total_listings || listings.length
   const current = listings[idx]
-  const isLocked = !user && idx >= 3
+  const { canViewAllCards: _, FREE_CARD_LIMIT: __ } = { canViewAllCards: true, FREE_CARD_LIMIT: 3 }
+  // Free users see 3 cards, Explorer+ see all
+  const isLocked = !user ? idx >= 3 : (user?.user_metadata?.tier === 'free' && idx >= 3)
 
   const fmt  = (n: any) => n ? `$${Number(n).toLocaleString()}` : 'N/A'
 
