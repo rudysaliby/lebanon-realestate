@@ -84,57 +84,67 @@ def parse_amenities_from_html(html: str) -> tuple:
     return list(features), list(lifestyle)
 
 def parse_coords_from_html(html: str) -> tuple:
-    """Extract community → district → province coords from HTML."""
+    """Extract community → district → province coords from HTML.
+    
+    HTML structure:
+    "community":{"id":969,"name_en":"Achrafieh","latitude":"33.88","longitude":"35.51",
+      "district":{"name_en":"Beirut district","latitude":"33.88",
+        "province":{"name_en":"Beirut Governorate"}}}
+    
+    We extract the community block first, then parse district/province within it.
+    """
     lat = lng = area = subregion = region = None
 
-    # Community object (has name + coords)
-    comm_m = re.search(
-        r'"community"\s*:\s*\{[^}]*"name_en"\s*:\s*"([^"]+)"[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"',
-        html
-    )
-    if not comm_m:
-        comm_m = re.search(
-            r'"community"\s*:\s*\{[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"[^}]*"name_en"\s*:\s*"([^"]+)"',
-            html
-        )
-        if comm_m:
-            clat, clng, cname = comm_m.group(1), comm_m.group(2), comm_m.group(3)
-        else:
-            clat = clng = cname = None
-    else:
-        cname, clat, clng = comm_m.group(1), comm_m.group(2), comm_m.group(3)
+    # Find the community block start
+    comm_start = html.find('"community":')
+    if comm_start == -1:
+        return lat, lng, area, subregion, region
 
-    if clat and validate_lb(clat, clng or "0"):
-        lat, lng = float(clat), float(clng)
-        area = cname
+    # Extract just the community object (up to the nested district)
+    # Community fields come before "district" key
+    comm_block = html[comm_start:comm_start + 500]
 
-    # District name
-    dist_m = re.search(r'"district"\s*:\s*\{[^}]*"name_en"\s*:\s*"([^"]+)"', html)
-    if dist_m:
-        subregion = dist_m.group(1).replace(" district","").replace(" District","") or None
+    # Extract community name_en (first name_en before district)
+    name_m = re.search(r'"name_en"\s*:\s*"([^"]+)"', comm_block)
+    lat_m  = re.search(r'"latitude"\s*:\s*"([\d.]+)"', comm_block)
+    lng_m  = re.search(r'"longitude"\s*:\s*"([\d.]+)"', comm_block)
 
-    # Province name
-    prov_m = re.search(r'"province"\s*:\s*\{[^}]*"name_en"\s*:\s*"([^"]+)"', html)
-    if prov_m:
-        region = prov_m.group(1).replace(" Governorate","") or None
+    if lat_m and lng_m and validate_lb(lat_m.group(1), lng_m.group(1)):
+        lat  = float(lat_m.group(1))
+        lng  = float(lng_m.group(1))
+        area = name_m.group(1) if name_m else None
 
-    # Fallback: use district coords if no community coords
-    if not lat:
-        dist_coords = re.search(
-            r'"district"\s*:\s*\{[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"',
-            html
-        )
-        if dist_coords and validate_lb(dist_coords.group(1), dist_coords.group(2)):
-            lat, lng = float(dist_coords.group(1)), float(dist_coords.group(2))
+    # Find district block within community block
+    dist_start = comm_block.find('"district":')
+    if dist_start != -1:
+        dist_block = comm_block[dist_start:dist_start + 300]
+        dist_name_m = re.search(r'"name_en"\s*:\s*"([^"]+)"', dist_block)
+        if dist_name_m:
+            subregion = dist_name_m.group(1).replace(" district","").replace(" District","") or None
 
-    # Fallback: province coords
-    if not lat:
-        prov_coords = re.search(
-            r'"province"\s*:\s*\{[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"',
-            html
-        )
-        if prov_coords and validate_lb(prov_coords.group(1), prov_coords.group(2)):
-            lat, lng = float(prov_coords.group(1)), float(prov_coords.group(2))
+        # Fallback: district coords if no community coords
+        if not lat:
+            dist_lat_m = re.search(r'"latitude"\s*:\s*"([\d.]+)"', dist_block)
+            dist_lng_m = re.search(r'"longitude"\s*:\s*"([\d.]+)"', dist_block)
+            if dist_lat_m and dist_lng_m and validate_lb(dist_lat_m.group(1), dist_lng_m.group(1)):
+                lat = float(dist_lat_m.group(1))
+                lng = float(dist_lng_m.group(1))
+
+        # Find province block within district block
+        prov_start = dist_block.find('"province":')
+        if prov_start != -1:
+            prov_block = dist_block[prov_start:prov_start + 200]
+            prov_name_m = re.search(r'"name_en"\s*:\s*"([^"]+)"', prov_block)
+            if prov_name_m:
+                region = prov_name_m.group(1).replace(" Governorate","") or None
+
+            # Fallback: province coords
+            if not lat:
+                prov_lat_m = re.search(r'"latitude"\s*:\s*"([\d.]+)"', prov_block)
+                prov_lng_m = re.search(r'"longitude"\s*:\s*"([\d.]+)"', prov_block)
+                if prov_lat_m and prov_lng_m and validate_lb(prov_lat_m.group(1), prov_lng_m.group(1)):
+                    lat = float(prov_lat_m.group(1))
+                    lng = float(prov_lng_m.group(1))
 
     return lat, lng, area, subregion, region
 
