@@ -236,8 +236,28 @@ class RealEstateLBScraper(BaseScraper):
 
         log(f"[RELB] {len(all_docs)} listings — fetching HTML pages for full data...")
 
-        # ── Step 2: Fetch HTML pages with httpx (40 parallel, no rate limit) ──
-        det_sem   = asyncio.Semaphore(40)
+        # ── Step 2a: Get XSRF-TOKEN cookie via Playwright (required by site) ─
+        cookies_dict = {}
+        try:
+            from playwright.async_api import async_playwright
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                ctx = await browser.new_context(
+                    user_agent=HEADERS["User-Agent"],
+                    viewport={"width": 1280, "height": 800}
+                )
+                page = await ctx.new_page()
+                await page.goto(f"{BASE}/en/buy-properties-lebanon", wait_until="domcontentloaded", timeout=20000)
+                raw_cookies = await ctx.cookies()
+                cookies_dict = {c["name"]: c["value"] for c in raw_cookies}
+                await page.close()
+                await browser.close()
+            log(f"[RELB] Got {len(cookies_dict)} cookies (XSRF: {'XSRF-TOKEN' in cookies_dict})")
+        except Exception as e:
+            log(f"[RELB] Cookie fetch failed: {e}")
+
+        # ── Step 2b: Fetch HTML pages with httpx (40 parallel) ────────────────
+        det_sem   = asyncio.Semaphore(40) first
         completed = 0
         total_det = len(all_docs)
         lock      = asyncio.Lock()
@@ -245,7 +265,10 @@ class RealEstateLBScraper(BaseScraper):
         listings  = []
 
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=15, follow_redirects=True,
+            headers=HEADERS,
+            cookies=cookies_dict,
+            timeout=15,
+            follow_redirects=True,
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=40)
         ) as client:
 
@@ -258,11 +281,17 @@ class RealEstateLBScraper(BaseScraper):
                         if not url_path:
                             return None
 
-                        # Build full listing URL
-                        page_url = f"{BASE}/en{url_path}" if not url_path.startswith("http") else url_path
+                        # Build full listing URL — handle /en/ prefix already present
+                        if url_path.startswith("http"):
+                            page_url = url_path
+                        elif url_path.startswith("/en/"):
+                            page_url = f"{BASE}{url_path}"
+                        else:
+                            page_url = f"{BASE}/en{url_path}"
 
                         resp = await client.get(page_url)
                         if resp.status_code != 200:
+                            log(f"  [RELB] HTTP {resp.status_code} for {page_url}")
                             return None
                         html = resp.text
 
@@ -314,6 +343,7 @@ class RealEstateLBScraper(BaseScraper):
                         size_sqm = float(basic["area"]) if basic.get("area") else None
 
                         if not price:
+                            log(f"  [RELB] no price for {basic.get('id')}")
                             return None
 
                         price_suspect = (price < 15000 and period == "sale")
@@ -349,7 +379,8 @@ class RealEstateLBScraper(BaseScraper):
                         result = listing
 
                     except Exception as e:
-                        log(f"  [RELB] error {basic.get('id')}: {type(e).__name__}: {e}")
+                        # Always print errors even when progress active
+                        print(f"  [RELB] error {basic.get('id')}: {type(e).__name__}: {e}")
 
                     finally:
                         async with lock:
