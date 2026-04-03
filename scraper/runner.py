@@ -119,7 +119,7 @@ async def run():
     print("\n── STEP 1/4  Scraping all OLX property categories\n")
 
     # Total pages across all categories
-    TOTAL_PAGES = 659 + 165 + 172 + 78 + 29 + 17  # 1120
+    TOTAL_PAGES = 659 + 172 + 78 + 29 + 17 + 165 + 151  # 1271
     prog = ScrapeProgress("OLX", TOTAL_PAGES)
 
     sys.stdout.write(f"  ⟳ OLX   [{'░'*20}]   0%  starting...\n")

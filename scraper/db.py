@@ -76,7 +76,6 @@ async def upsert_listings(listings) -> int:
             "area":            getattr(l, "area", None),
             "subregion":       getattr(l, "subregion", None),
             "region":          getattr(l, "region", None),
-            "city":            "Beirut",
             "lat":             l.lat,
             "lng":             l.lng,
             "image_url":       getattr(l, "image_url", None),

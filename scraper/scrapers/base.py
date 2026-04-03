@@ -83,6 +83,8 @@ class BaseScraper:
             if any(w in t for w in ["villa","house","townhouse","chalet","duplex","triplex"]): return "villa"
             if any(w in t for w in ["land","plot","terrain"]): return "land"
             if any(w in t for w in ["commercial","office","shop","store","warehouse"]): return "commercial"
+            if any(w in t for w in ["chalet","cabin"]): return "chalet"
+            if any(w in t for w in ["building","multiple unit"]): return "building"
         text = (title or "").lower()
         if any(w in text for w in ["apartment","flat","شقة","appt","loft","studio"]): return "apartment"
         if any(w in text for w in ["villa","house","townhouse","فيلا","chalet","duplex","triplex"]): return "villa"
