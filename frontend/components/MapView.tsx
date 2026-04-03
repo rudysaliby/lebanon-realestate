@@ -213,7 +213,7 @@ export default function MapView({ geojson, mode, onAreaClick }: {
     const areaGeo = buildAreaGeoJSON(geojson, mode)
     const update = () => {
       const src = map.current!.getSource('areas') as mapboxgl.GeoJSONSource
-      if (src) src.setData(areaGeo)
+      if (src) src.setData(areaGeo as any)
     }
     if (map.current.loaded()) update()
     else map.current.on('load', update)
