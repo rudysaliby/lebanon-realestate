@@ -1,3 +1,15 @@
+"""
+Database save layer.
+
+Mandatory field checks:
+- price > 0
+- price_period (sale/monthly)
+- lat/lng OR area (for enrichment coord lookup)
+- region OR area (at least one location)
+
+Optional fields saved if present.
+Listings missing mandatory fields after enrichment are deleted by cleanup step.
+"""
 import os
 import httpx
 
@@ -17,65 +29,61 @@ async def upsert_listings(listings) -> int:
 
     rows = []
     seen_urls = set()
-    skipped = 0
+    skipped_price = 0
+    skipped_location = 0
 
     for l in listings:
         if not l.url or l.url in seen_urls:
             continue
 
-        # Skip listings without price
+        # ── Mandatory: must have price ────────────────────────────────────────
         if not l.price or l.price <= 0:
-            skipped += 1
+            skipped_price += 1
             continue
 
-        # Flag listings with suspiciously low price for AI verification
-        # These might be price/sqm entered as total price
-        price_verified = True
-        if (l.price < 15000 and
-            getattr(l, 'price_period', None) != 'monthly'):
-            price_verified = False  # will be checked by enrichment
-
-        # Skip listings with no location at all (no coords AND no area AND no location_raw)
+        # ── Mandatory: must have some location info ───────────────────────────
         has_any_location = (
             l.lat is not None or
             bool(getattr(l, "area", None)) or
+            bool(getattr(l, "region", None)) or
             bool(getattr(l, "location_raw", None))
         )
         if not has_any_location:
-            skipped += 1
+            skipped_location += 1
             continue
 
         seen_urls.add(l.url)
 
-        has_coords = l.lat is not None and l.lng is not None
-
-        # Validate size — reject implausible values
+        # ── Validate size ─────────────────────────────────────────────────────
         size = getattr(l, "size_sqm", None)
-        if size is not None and not (20 <= size <= 5000):
-            l.size_sqm = None
+        if size is not None and not (10 <= size <= 10000):
+            l.size_sqm = None  # Clear implausible value, don't drop
+
+        has_coords  = l.lat is not None and l.lng is not None
+        price_suspect = getattr(l, "_price_suspect", False)
 
         row = {
-            "source":        l.source,
-            "url":           l.url,
-            "title":         l.title,
-            "description":   getattr(l, "description", None),
-            "price":         l.price,
-            "currency":      getattr(l, "currency", "USD"),
-            "price_period":  getattr(l, "price_period", None),
-            "property_type": getattr(l, "property_type", None),
-            "size_sqm":      getattr(l, "size_sqm", None),
-            "location_raw":  getattr(l, "location_raw", None),
-            "area":          getattr(l, "area", None),
-            "subregion":     getattr(l, "subregion", None),
-            "region":        getattr(l, "region", None),
-            "city":          "Beirut",
-            "lat":           l.lat,
-            "lng":           l.lng,
-            "image_url":     getattr(l, "image_url", None),
-            "is_active":      True,
-            "ai_verified":    has_coords,
-            "price_verified": price_verified,
-            "ai_tags_done":  any([
+            "source":          l.source,
+            "url":             l.url,
+            "title":           l.title,
+            "description":     getattr(l, "description", None),
+            "price":           l.price,
+            "currency":        getattr(l, "currency", "USD"),
+            "price_period":    getattr(l, "price_period", None),
+            "property_type":   getattr(l, "property_type", None),
+            "size_sqm":        getattr(l, "size_sqm", None),
+            "location_raw":    getattr(l, "location_raw", None),
+            "area":            getattr(l, "area", None),
+            "subregion":       getattr(l, "subregion", None),
+            "region":          getattr(l, "region", None),
+            "city":            "Beirut",
+            "lat":             l.lat,
+            "lng":             l.lng,
+            "image_url":       getattr(l, "image_url", None),
+            "is_active":       True,
+            "ai_verified":     has_coords,
+            "price_verified":  not price_suspect,  # False = needs AI price check
+            "ai_tags_done":    any([
                 getattr(l, "_furnished", None),
                 getattr(l, "_bedrooms", None),
                 getattr(l, "_amenities", None),
@@ -83,7 +91,7 @@ async def upsert_listings(listings) -> int:
             ]),
         }
 
-        # All pre-scraped tags — no AI needed
+        # ── Optional tags ─────────────────────────────────────────────────────
         if getattr(l, "_furnished", None):    row["furnished"]     = l._furnished
         if getattr(l, "_bedrooms", None):     row["bedrooms"]      = l._bedrooms
         if getattr(l, "_bathrooms", None):    row["bathrooms"]     = l._bathrooms
@@ -97,8 +105,8 @@ async def upsert_listings(listings) -> int:
 
         rows.append({k: v for k, v in row.items() if v is not None})
 
-    if skipped:
-        print(f"[DB] Skipped {skipped} listings (no price or no location)")
+    if skipped_price:    print(f"[DB] Skipped {skipped_price} listings — no price")
+    if skipped_location: print(f"[DB] Skipped {skipped_location} listings — no location")
 
     chunk_size = 50
     total = 0
