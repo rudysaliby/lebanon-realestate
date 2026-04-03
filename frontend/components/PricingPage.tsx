@@ -264,7 +264,7 @@ export default function PricingPage({ onClose, currentTier, user, onUpgrade }: {
                     color: isCurrentPlan
                       ? t.textMuted
                       : plan.popular || plan.id === 'analyst' ? '#fff' : t.text,
-                    border: isCurrentPlan ? `1px solid ${t.border}` : 'none',
+                    outline: isCurrentPlan ? `1px solid ${t.border}` : 'none',
                     opacity: loading === plan.id ? 0.7 : 1,
                     transition: 'all 0.15s',
                   }}>
