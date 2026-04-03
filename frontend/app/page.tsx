@@ -7,7 +7,10 @@ import AreaPanel from '@/components/AreaPanel'
 import InsightsTab from '@/components/InsightsTab'
 import AuthModal from '@/components/AuthModal'
 import UserMenu from '@/components/UserMenu'
-import { BarChart2, Map, LogIn } from 'lucide-react'
+import IqariLogo from '@/components/IqariLogo'
+import ThemeToggle from '@/components/ThemeToggle'
+import { ThemeProvider, useTheme, T } from '@/components/ThemeContext'
+import { BarChart2, Map } from 'lucide-react'
 import { useUser } from '@/lib/useUser'
 
 const MapView = dynamic(() => import('@/components/MapView'), { ssr: false })
@@ -28,16 +31,18 @@ export type Filters = {
 
 const DEFAULT_FILTERS: Filters = {
   minPrice: '', maxPrice: '', bedrooms: 'all',
-  furnished: 'all', condition: 'all', region: 'all'
+  furnished: 'all', condition: 'all', region: 'all',
 }
 
-export default function Home() {
-  const { user, loading: authLoading } = useUser()
+function AppContent() {
+  const { theme } = useTheme()
+  const t = T[theme]
+  const { user } = useUser()
   const [mode, setMode] = useState<Mode | null>(null)
   const [tab, setTab] = useState<'map' | 'insights'>('map')
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
   const [geojson, setGeojson] = useState<any>(null)
-  const [areaData, setAreaData] = useState<any>(null) // clicked area
+  const [areaData, setAreaData] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [count, setCount] = useState(0)
   const [showAuth, setShowAuth] = useState(false)
@@ -48,16 +53,18 @@ export default function Home() {
     const p = new URLSearchParams()
     p.set('period', mode.period)
     p.set('type_group', mode.type)
-    if (filters.minPrice) p.set('min_price', filters.minPrice)
-    if (filters.maxPrice) p.set('max_price', filters.maxPrice)
+    if (filters.minPrice)           p.set('min_price', filters.minPrice)
+    if (filters.maxPrice)           p.set('max_price', filters.maxPrice)
     if (filters.bedrooms !== 'all') p.set('bedrooms', filters.bedrooms)
     if (filters.furnished !== 'all') p.set('furnished', filters.furnished)
     if (filters.condition !== 'all') p.set('condition', filters.condition)
-    if (filters.region !== 'all') p.set('region', filters.region)
-    const res = await fetch(`/api/listings?${p}`)
-    const data = await res.json()
-    setGeojson(data)
-    setCount(data?.features?.length || 0)
+    if (filters.region !== 'all')   p.set('region', filters.region)
+    try {
+      const res = await fetch(`/api/listings?${p}`)
+      const data = await res.json()
+      setGeojson(data)
+      setCount(data?.features?.length || 0)
+    } catch (e) {}
     setLoading(false)
   }, [mode, filters])
 
@@ -71,87 +78,76 @@ export default function Home() {
   }`
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0a0a', fontFamily: "'DM Sans', sans-serif" }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: t.bg, fontFamily: "'DM Sans', sans-serif", transition: 'background 0.3s' }}>
 
       {/* Header */}
       <header style={{
-        background: '#0f0f0f',
-        borderBottom: '1px solid rgba(255,255,255,0.07)',
+        background: t.bgPanel,
+        borderBottom: `1px solid ${t.border}`,
         padding: '0 20px',
         height: 52,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        zIndex: 20,
-        flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        zIndex: 20, flexShrink: 0,
+        boxShadow: theme === 'light' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+        transition: 'background 0.3s, border-color 0.3s',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          {/* Logo */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => setMode(null)}>
-            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-              <rect width="22" height="22" rx="5" fill="#1a6b3a"/>
-              <path d="M11 3L4 9v10h4v-5h6v5h4V9L11 3z" fill="white" opacity="0.9"/>
-              <circle cx="11" cy="11" r="2" fill="#4ade80"/>
-            </svg>
-            <span style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: '-0.03em', color: '#f0ede6' }}>
-              Prop<span style={{ color: '#4ade80' }}>IQ</span>
-            </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ cursor: 'pointer' }} onClick={() => setMode(null)}>
+            <IqariLogo size="sm" />
           </div>
 
-          <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.1)' }} />
+          <div style={{ width: 1, height: 18, background: t.border }} />
 
           {/* Mode badge */}
-          <button
-            onClick={() => setMode(null)}
-            style={{
-              background: 'rgba(74,222,128,0.1)',
-              border: '1px solid rgba(74,222,128,0.25)',
-              borderRadius: 6,
-              padding: '3px 10px',
-              fontSize: 11,
-              fontWeight: 600,
-              color: '#4ade80',
-              cursor: 'pointer',
-              letterSpacing: '0.02em',
-              textTransform: 'uppercase',
-            }}>
+          <button onClick={() => setMode(null)} style={{
+            background: t.accentBg,
+            border: `1px solid ${t.accentBorder}`,
+            borderRadius: 6, padding: '3px 10px',
+            fontSize: 11, fontWeight: 600, color: t.accent,
+            cursor: 'pointer', letterSpacing: '0.02em', textTransform: 'uppercase',
+          }}>
             {modeLabel} ↗
           </button>
 
-          <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.1)' }} />
+          <div style={{ width: 1, height: 18, background: t.border }} />
 
           {/* Tabs */}
-          {(['map', 'insights'] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{
+          {(['map', 'insights'] as const).map(tb => (
+            <button key={tb} onClick={() => setTab(tb)} style={{
               display: 'flex', alignItems: 'center', gap: 5,
               padding: '4px 12px', borderRadius: 6, fontSize: 12,
-              cursor: 'pointer', fontWeight: tab === t ? 600 : 400,
-              background: tab === t ? 'rgba(74,222,128,0.12)' : 'transparent',
-              border: `1px solid ${tab === t ? 'rgba(74,222,128,0.3)' : 'transparent'}`,
-              color: tab === t ? '#4ade80' : 'rgba(255,255,255,0.4)',
+              cursor: 'pointer', fontWeight: tab === tb ? 600 : 400,
+              background: tab === tb ? t.accentBg : 'transparent',
+              border: `1px solid ${tab === tb ? t.accentBorder : 'transparent'}`,
+              color: tab === tb ? t.accent : t.textMuted,
               transition: 'all 0.15s',
             }}>
-              {t === 'map' ? <Map size={12} /> : <BarChart2 size={12} />}
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {tb === 'map' ? <Map size={12} /> : <BarChart2 size={12} />}
+              {tb.charAt(0).toUpperCase() + tb.slice(1)}
             </button>
           ))}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
-            {loading ? <span style={{ color: '#4ade80' }}>Loading...</span> :
-              <><strong style={{ color: 'rgba(255,255,255,0.7)' }}>{count.toLocaleString()}</strong> listings</>}
+          <span style={{ fontSize: 11, color: t.textMuted }}>
+            {loading
+              ? <span style={{ color: t.accent }}>Loading...</span>
+              : <><strong style={{ color: t.textSub }}>{count.toLocaleString()}</strong> listings</>
+            }
           </span>
+
+          <ThemeToggle />
+
           {user ? (
             <UserMenu user={user} />
           ) : (
             <button onClick={() => setShowAuth(true)} style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              background: '#1a6b3a', border: 'none', borderRadius: 7,
+              background: '#16a34a', border: 'none', borderRadius: 7,
               padding: '6px 14px', fontSize: 12, fontWeight: 600,
               color: '#fff', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
             }}>
-              <LogIn size={12} /> Sign In
+              Sign In
             </button>
           )}
         </div>
@@ -159,19 +155,19 @@ export default function Home() {
 
       {/* Filter bar */}
       {tab === 'map' && (
-        <FilterBar filters={filters} mode={mode} onChange={f => { setAreaData(null); setFilters(f) }} />
+        <FilterBar
+          filters={filters}
+          mode={mode}
+          onChange={f => { setAreaData(null); setFilters(f) }}
+        />
       )}
 
-      {/* Main content */}
+      {/* Main */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {tab === 'map' ? (
           <>
-            <MapView
-              geojson={geojson}
-              mode={mode}
-              onAreaClick={setAreaData}
-            />
-            {/* Area panel */}
+            <MapView geojson={geojson} mode={mode} onAreaClick={setAreaData} />
+
             {areaData && (
               <AreaPanel
                 areaData={areaData}
@@ -181,24 +177,27 @@ export default function Home() {
                 onSignIn={() => setShowAuth(true)}
               />
             )}
-            {/* Map legend */}
+
+            {/* Legend */}
             <div style={{
               position: 'absolute', bottom: 28, left: 16,
-              background: 'rgba(15,15,15,0.92)', backdropFilter: 'blur(12px)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: theme === 'dark' ? 'rgba(15,15,15,0.92)' : 'rgba(255,255,255,0.95)',
+              backdropFilter: 'blur(12px)',
+              border: `1px solid ${t.border}`,
               borderRadius: 10, padding: '10px 14px',
               display: 'flex', flexDirection: 'column', gap: 6,
+              boxShadow: t.shadow,
             }}>
-              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Price/sqm</span>
+              <span style={{ fontSize: 10, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Price/sqm</span>
               {[
                 { color: '#4ade80', label: 'Below market' },
                 { color: '#facc15', label: 'Fair market' },
                 { color: '#f87171', label: 'Above market' },
-                { color: '#6b7280', label: 'No data' },
+                { color: '#9ca3af', label: 'No data' },
               ].map(({ color, label }) => (
                 <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <div style={{ width: 10, height: 10, borderRadius: '50%', background: color }} />
-                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>{label}</span>
+                  <span style={{ fontSize: 11, color: t.textSub }}>{label}</span>
                 </div>
               ))}
             </div>
@@ -210,5 +209,13 @@ export default function Home() {
 
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
     </div>
+  )
+}
+
+export default function Home() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   )
 }

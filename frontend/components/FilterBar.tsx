@@ -1,71 +1,106 @@
 'use client'
+import { useTheme, T } from '@/components/ThemeContext'
 import type { Filters, Mode } from '@/app/page'
 
-const sel = (label: string, value: string, opts: {v:string,l:string}[], onChange: (v:string)=>void) => (
-  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-    <span style={{ fontSize:11, color:'rgba(255,255,255,0.3)', whiteSpace:'nowrap' }}>{label}</span>
-    <select value={value} onChange={e=>onChange(e.target.value)} style={{
-      background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)',
-      borderRadius:6, color:'rgba(255,255,255,0.8)', fontSize:12, padding:'4px 8px',
-      cursor:'pointer', outline:'none',
-    }}>
-      {opts.map(o=><option key={o.v} value={o.v} style={{background:'#1a1a1a'}}>{o.l}</option>)}
-    </select>
-  </div>
-)
-
-const inp = (label:string, value:string, placeholder:string, onChange:(v:string)=>void) => (
-  <div style={{display:'flex',alignItems:'center',gap:6}}>
-    <span style={{fontSize:11,color:'rgba(255,255,255,0.3)',whiteSpace:'nowrap'}}>{label}</span>
-    <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{
-      background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',
-      borderRadius:6,color:'rgba(255,255,255,0.8)',fontSize:12,padding:'4px 8px',
-      width:90,outline:'none',
-    }} />
-  </div>
-)
-
 export default function FilterBar({ filters, mode, onChange }: {
-  filters: Filters
-  mode: Mode
-  onChange: (f: Filters) => void
+  filters: Filters, mode: Mode, onChange: (f: Filters) => void
 }) {
+  const { theme } = useTheme()
+  const t = T[theme]
   const set = (k: keyof Filters) => (v: string) => onChange({ ...filters, [k]: v })
   const isResidential = mode.type === 'residential'
-  const isRent = mode.period === 'monthly'
+
+  const selStyle = {
+    background: t.bgCard,
+    border: `1px solid ${t.border}`,
+    borderRadius: 6, color: t.text, fontSize: 12,
+    padding: '4px 8px', cursor: 'pointer', outline: 'none',
+  }
+
+  const inpStyle = {
+    background: t.bgCard,
+    border: `1px solid ${t.border}`,
+    borderRadius: 6, color: t.text, fontSize: 12,
+    padding: '4px 8px', width: 90, outline: 'none',
+  }
+
+  const label = (text: string) => (
+    <span style={{ fontSize: 11, color: t.textMuted, whiteSpace: 'nowrap' as const }}>{text}</span>
+  )
 
   const regions = [
-    {v:'all',l:'All Regions'},{v:'Beirut',l:'Beirut'},{v:'Mount Lebanon',l:'Mount Lebanon'},
-    {v:'North Lebanon',l:'North Lebanon'},{v:'South Lebanon',l:'South Lebanon'},
-    {v:'Bekaa',l:'Bekaa'},{v:'Nabatieh',l:'Nabatieh'},
+    { v: 'all', l: 'All Regions' }, { v: 'Beirut', l: 'Beirut' },
+    { v: 'Mount Lebanon', l: 'Mount Lebanon' }, { v: 'North Lebanon', l: 'North' },
+    { v: 'South Lebanon', l: 'South' }, { v: 'Bekaa', l: 'Bekaa' }, { v: 'Nabatieh', l: 'Nabatieh' },
   ]
 
   return (
     <div style={{
-      background:'#0f0f0f', borderBottom:'1px solid rgba(255,255,255,0.06)',
-      padding:'8px 20px', display:'flex', alignItems:'center', gap:16,
-      overflowX:'auto', flexShrink:0,
+      background: t.bgPanel,
+      borderBottom: `1px solid ${t.border}`,
+      padding: '7px 20px',
+      display: 'flex', alignItems: 'center', gap: 14,
+      overflowX: 'auto', flexShrink: 0,
+      transition: 'background 0.3s',
     }}>
-      {sel('Region', filters.region, regions, set('region'))}
-      {inp('Min $', filters.minPrice, '0', set('minPrice'))}
-      {inp('Max $', filters.maxPrice, '∞', set('maxPrice'))}
-      {isResidential && sel('Beds', filters.bedrooms, [
-        {v:'all',l:'Any'},{v:'1',l:'1+'},{v:'2',l:'2+'},{v:'3',l:'3+'},{v:'4',l:'4+'},{v:'5',l:'5+'},
-      ], set('bedrooms'))}
-      {isResidential && sel('Furnished', filters.furnished, [
-        {v:'all',l:'Any'},{v:'furnished',l:'Furnished'},{v:'semi-furnished',l:'Semi'},{v:'unfurnished',l:'Unfurnished'},
-      ], set('furnished'))}
-      {sel('Condition', filters.condition, [
-        {v:'all',l:'Any'},{v:'new',l:'New'},{v:'well-maintained',l:'Well Maintained'},
-        {v:'renovated',l:'Renovated'},{v:'under-construction',l:'Off Plan'},
-      ], set('condition'))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {label('Region')}
+        <select value={filters.region} onChange={e => set('region')(e.target.value)} style={selStyle}>
+          {regions.map(r => <option key={r.v} value={r.v} style={{ background: t.bgPanel }}>{r.l}</option>)}
+        </select>
+      </div>
 
-      {/* Reset */}
-      <button onClick={() => onChange({ minPrice:'',maxPrice:'',bedrooms:'all',furnished:'all',condition:'all',region:'all' })}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {label('Min $')}
+        <input value={filters.minPrice} onChange={e => set('minPrice')(e.target.value)} placeholder="0" style={inpStyle} />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {label('Max $')}
+        <input value={filters.maxPrice} onChange={e => set('maxPrice')(e.target.value)} placeholder="∞" style={inpStyle} />
+      </div>
+
+      {isResidential && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {label('Beds')}
+          <select value={filters.bedrooms} onChange={e => set('bedrooms')(e.target.value)} style={selStyle}>
+            {[{v:'all',l:'Any'},{v:'1',l:'1+'},{v:'2',l:'2+'},{v:'3',l:'3+'},{v:'4',l:'4+'},{v:'5',l:'5+'}].map(o => (
+              <option key={o.v} value={o.v} style={{ background: t.bgPanel }}>{o.l}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {isResidential && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {label('Furnished')}
+          <select value={filters.furnished} onChange={e => set('furnished')(e.target.value)} style={selStyle}>
+            {[{v:'all',l:'Any'},{v:'furnished',l:'Furnished'},{v:'semi-furnished',l:'Semi'},{v:'unfurnished',l:'Unfurnished'}].map(o => (
+              <option key={o.v} value={o.v} style={{ background: t.bgPanel }}>{o.l}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {label('Condition')}
+        <select value={filters.condition} onChange={e => set('condition')(e.target.value)} style={selStyle}>
+          {[
+            {v:'all',l:'Any'},{v:'new',l:'New'},{v:'well-maintained',l:'Well Maintained'},
+            {v:'renovated',l:'Renovated'},{v:'under-construction',l:'Off Plan'},
+          ].map(o => (
+            <option key={o.v} value={o.v} style={{ background: t.bgPanel }}>{o.l}</option>
+          ))}
+        </select>
+      </div>
+
+      <button
+        onClick={() => onChange({ minPrice:'',maxPrice:'',bedrooms:'all',furnished:'all',condition:'all',region:'all' })}
         style={{
-          marginLeft:'auto', background:'none', border:'1px solid rgba(255,255,255,0.1)',
-          borderRadius:6, color:'rgba(255,255,255,0.35)', fontSize:11, padding:'4px 10px',
-          cursor:'pointer', whiteSpace:'nowrap',
+          marginLeft: 'auto', background: 'none',
+          border: `1px solid ${t.border}`,
+          borderRadius: 6, color: t.textMuted, fontSize: 11,
+          padding: '4px 10px', cursor: 'pointer', whiteSpace: 'nowrap',
         }}>
         Reset
       </button>
