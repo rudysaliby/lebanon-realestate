@@ -281,13 +281,8 @@ class RealEstateLBScraper(BaseScraper):
                         if not url_path:
                             return None
 
-                        # Build full listing URL — handle /en/ prefix already present
-                        if url_path.startswith("http"):
-                            page_url = url_path
-                        elif url_path.startswith("/en/"):
-                            page_url = f"{BASE}{url_path}"
-                        else:
-                            page_url = f"{BASE}/en{url_path}"
+                        # Build full listing URL — server redirects /buy-properties-lebanon/ to /en/buy-properties-lebanon/
+                        page_url = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
 
                         resp = await client.get(page_url)
                         if resp.status_code != 200:
