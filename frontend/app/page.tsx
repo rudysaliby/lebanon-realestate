@@ -128,15 +128,34 @@ function AppContent() {
 
           <div style={{ width: 1, height: 18, background: t.border }} />
 
-          {/* Mode badge — click to change */}
-          <button onClick={() => handleSetMode(null)} style={{
-            background: t.accentBg, border: `1px solid ${t.accentBorder}`,
-            borderRadius: 6, padding: '3px 10px', fontSize: 11,
-            fontWeight: 600, color: t.accent, cursor: 'pointer',
-            letterSpacing: '0.02em', textTransform: 'uppercase',
-          }}>
-            {modeLabel} ↗
-          </button>
+          {/* Mode controls — change period/type independently */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {/* Period toggle */}
+            {(['sale', 'monthly'] as const).map(p => (
+              <button key={p} onClick={() => handleSetMode({ ...mode, period: p })} style={{
+                padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                cursor: 'pointer', border: 'none',
+                background: mode.period === p ? t.accent : t.bgCard,
+                color: mode.period === p ? '#000' : t.textMuted,
+                transition: 'all 0.15s',
+              }}>
+                {p === 'sale' ? 'Sale' : 'Rent'}
+              </button>
+            ))}
+            <div style={{ width: 1, height: 14, background: t.border, margin: '0 4px' }} />
+            {/* Type toggle */}
+            {(['residential', 'land', 'commercial'] as const).map(tp => (
+              <button key={tp} onClick={() => handleSetMode({ ...mode, type: tp })} style={{
+                padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                cursor: 'pointer', border: 'none',
+                background: mode.type === tp ? t.accent : t.bgCard,
+                color: mode.type === tp ? '#000' : t.textMuted,
+                transition: 'all 0.15s',
+              }}>
+                {tp.charAt(0).toUpperCase() + tp.slice(1)}
+              </button>
+            ))}
+          </div>
 
           <div style={{ width: 1, height: 18, background: t.border }} />
 
@@ -187,7 +206,7 @@ function AppContent() {
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {tab === 'map' ? (
           <>
-            <MapView geojson={geojson} mode={mode} onAreaClick={setAreaData} />
+            <MapView geojson={geojson} mode={mode} onAreaClick={setAreaData} user={user} />
 
             {areaData && (
               <AreaPanel
