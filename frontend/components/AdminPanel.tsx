@@ -15,8 +15,10 @@ type Benchmark = {
   area: string
   region: string
   type_group: 'residential' | 'land' | 'commercial'
+  price_period: 'sale' | 'monthly'
   median_ppsqm: number
   source: 'manual' | 'computed'
+  notes?: string
   updated_at?: string
 }
 
@@ -40,9 +42,38 @@ export default function AdminPanel({ onClose, user }: {
 
   // New benchmark form
   const [newBM, setNewBM] = useState<Partial<Benchmark>>({
-    area: '', region: '', type_group: 'residential', median_ppsqm: 0
+    area: '', region: '', type_group: 'residential', price_period: 'sale', median_ppsqm: 0
   })
   const [addingNew, setAddingNew] = useState(false)
+  const [areaList, setAreaList] = useState<{area: string, region: string, subregion: string}[]>([])
+
+  // Fetch distinct areas from listings DB on mount
+  useEffect(() => {
+    const fetchAreas = async () => {
+      const { data } = await supabase
+        .from('listings')
+        .select('area, region, subregion')
+        .not('area', 'is', null)
+        .eq('is_active', true)
+        .order('area')
+      if (data) {
+        const seen = new Map<string, {area: string, region: string, subregion: string}>()
+        data.forEach((d: any) => {
+          if (d.area && !seen.has(d.area)) {
+            seen.set(d.area, { area: d.area, region: d.region || '', subregion: d.subregion || '' })
+          }
+        })
+        setAreaList(Array.from(seen.values()).sort((a, b) => a.area.localeCompare(b.area)))
+      }
+    }
+    fetchAreas()
+  }, [])
+
+  // When area selected — auto-fill region
+  const handleAreaSelect = (areaName: string) => {
+    const found = areaList.find(a => a.area === areaName)
+    setNewBM(b => ({ ...b, area: areaName, region: found?.region || b?.region || '' }))
+  }
 
   useEffect(() => {
     if (activeTab === 'benchmarks') fetchBenchmarks()
@@ -132,9 +163,17 @@ export default function AdminPanel({ onClose, user }: {
   const addBenchmark = async () => {
     if (!newBM.area || !newBM.median_ppsqm) return
     await saveBenchmark(newBM as Benchmark)
-    setNewBM({ area: '', region: '', type_group: 'residential', median_ppsqm: 0 })
+    setNewBM({ area: '', region: '', type_group: 'residential', price_period: 'sale', median_ppsqm: 0 })
+    setAreaSearch('')
     setAddingNew(false)
   }
+
+  // Searchable area dropdown
+  const [areaSearch, setAreaSearch] = useState('')
+  const [showAreaDrop, setShowAreaDrop] = useState(false)
+  const filteredAreas = areaList.filter(a =>
+    a.area.toLowerCase().includes(areaSearch.toLowerCase())
+  ).slice(0, 30)
 
   const filtered = filter === 'all' ? benchmarks : benchmarks.filter(b => b.type_group === filter)
 
@@ -264,14 +303,65 @@ export default function AdminPanel({ onClose, user }: {
                   background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)',
                   borderRadius: 10, padding: '16px', marginBottom: 16,
                 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
-                    <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
+                    <div style={{ position: 'relative' }}>
                       <label style={{ fontSize: 11, color: t.textMuted, display: 'block', marginBottom: 4 }}>Area name</label>
-                      {inp(newBM.area, v => setNewBM(b => ({...b, area: v})), 'text', 'e.g. Achrafieh')}
+                      <input
+                        value={areaSearch || newBM.area || ''}
+                        onChange={e => { setAreaSearch(e.target.value); setShowAreaDrop(true) }}
+                        onFocus={() => setShowAreaDrop(true)}
+                        onBlur={() => setTimeout(() => setShowAreaDrop(false), 150)}
+                        placeholder="Search area..."
+                        style={{
+                          background: t.bgCard, border: `1px solid ${newBM.area ? t.accentBorder : t.border}`,
+                          borderRadius: 6, padding: '5px 8px', fontSize: 12, color: t.text,
+                          outline: 'none', width: '100%', boxSizing: 'border-box',
+                        }}
+                      />
+                      {showAreaDrop && filteredAreas.length > 0 && (
+                        <div style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                          background: theme === 'dark' ? '#1a1a1a' : '#fff',
+                          border: `1px solid ${t.border}`, borderRadius: 8,
+                          maxHeight: 200, overflowY: 'auto',
+                          boxShadow: t.shadow, marginTop: 2,
+                        }}>
+                          {filteredAreas.map(a => (
+                            <div
+                              key={a.area}
+                              onMouseDown={() => {
+                                handleAreaSelect(a.area)
+                                setAreaSearch('')
+                                setShowAreaDrop(false)
+                              }}
+                              style={{
+                                padding: '8px 12px', cursor: 'pointer', fontSize: 12,
+                                borderBottom: `1px solid ${t.border}`,
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              }}
+                              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.bgCardHover}
+                              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                            >
+                              <span style={{ fontWeight: 600, color: t.text }}>{a.area}</span>
+                              <span style={{ fontSize: 10, color: t.textMuted }}>{a.region}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, color: t.textMuted, display: 'block', marginBottom: 4 }}>Region</label>
-                      {inp(newBM.region, v => setNewBM(b => ({...b, region: v})), 'text', 'e.g. Beirut')}
+                      <label style={{ fontSize: 11, color: t.textMuted, display: 'block', marginBottom: 4 }}>Region (auto)</label>
+                      <input
+                        value={newBM.region || ''}
+                        readOnly
+                        style={{
+                          background: t.bgCard, border: `1px solid ${t.border}`,
+                          borderRadius: 6, padding: '5px 8px', fontSize: 12,
+                          color: t.textMuted, outline: 'none', width: '100%',
+                          boxSizing: 'border-box', cursor: 'default',
+                        }}
+                        placeholder="Auto-filled"
+                      />
                     </div>
                     <div>
                       <label style={{ fontSize: 11, color: t.textMuted, display: 'block', marginBottom: 4 }}>Type</label>
@@ -280,6 +370,16 @@ export default function AdminPanel({ onClose, user }: {
                         padding: '5px 8px', fontSize: 12, color: t.text, outline: 'none', width: '100%',
                       }}>
                         {TYPE_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: t.textMuted, display: 'block', marginBottom: 4 }}>Period</label>
+                      <select value={newBM.price_period} onChange={e => setNewBM(b => ({...b, price_period: e.target.value as any}))} style={{
+                        background: t.bgCard, border: `1px solid ${t.border}`, borderRadius: 6,
+                        padding: '5px 8px', fontSize: 12, color: t.text, outline: 'none', width: '100%',
+                      }}>
+                        <option value="sale">Sale</option>
+                        <option value="monthly">Rent</option>
                       </select>
                     </div>
                     <div>
@@ -312,7 +412,7 @@ export default function AdminPanel({ onClose, user }: {
                 <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, overflow: 'hidden' }}>
                   {/* Table header */}
                   <div style={{
-                    display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr auto',
+                    display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr 1fr auto',
                     padding: '10px 14px', background: t.bgCard,
                     borderBottom: `1px solid ${t.border}`,
                     fontSize: 11, fontWeight: 700, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em',
@@ -320,6 +420,7 @@ export default function AdminPanel({ onClose, user }: {
                     <span>Area</span>
                     <span>Region</span>
                     <span>Type</span>
+                    <span>Period</span>
                     <span>$/m²</span>
                     <span>Source</span>
                     <span></span>
@@ -480,7 +581,7 @@ function BenchmarkRow({ bm, t, theme, onSave, onDelete, saving, isLast }: any) {
 
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr auto',
+      display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr 1fr auto',
       padding: '10px 14px', alignItems: 'center',
       borderBottom: isLast ? 'none' : `1px solid ${t.border}`,
       transition: 'background 0.15s',
@@ -496,6 +597,12 @@ function BenchmarkRow({ bm, t, theme, onSave, onDelete, saving, isLast }: any) {
         background: bm.type_group === 'residential' ? 'rgba(74,222,128,0.1)' : bm.type_group === 'land' ? 'rgba(250,204,21,0.1)' : 'rgba(96,165,250,0.1)',
         padding: '2px 7px', borderRadius: 4, textTransform: 'capitalize',
       }}>{bm.type_group}</span>
+      <span style={{
+        fontSize: 10, fontWeight: 700,
+        color: bm.price_period === 'sale' ? '#4ade80' : '#fb923c',
+        background: bm.price_period === 'sale' ? 'rgba(74,222,128,0.1)' : 'rgba(251,146,60,0.1)',
+        padding: '2px 7px', borderRadius: 4,
+      }}>{bm.price_period === 'sale' ? 'Sale' : 'Rent'}</span>
 
       {/* Editable price */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
