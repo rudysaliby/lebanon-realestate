@@ -4,6 +4,7 @@ import { LogOut, Coins, Crown, Zap } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 import { useTheme, T } from '@/components/ThemeContext'
 import PricingPage from '@/components/PricingPage'
+import AdminPanel from '@/components/AdminPanel'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -22,6 +23,7 @@ export default function UserMenu({ user }: { user: any }) {
   const t = T[theme]
   const [open, setOpen] = useState(false)
   const [showPricing, setShowPricing] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const tier   = user?.user_metadata?.tier || 'free'
   const tokens = user?.user_metadata?.tokens || 0
@@ -136,6 +138,22 @@ export default function UserMenu({ user }: { user: any }) {
               <Zap size={12}/> View all plans & pricing
             </button>
 
+            {/* Admin panel */}
+            {tier === 'admin' && (
+              <button
+                onClick={() => { setOpen(false); setShowAdmin(true) }}
+                style={{
+                  width:'100%', background:'rgba(245,158,11,0.08)',
+                  border:'1px solid rgba(245,158,11,0.2)',
+                  borderRadius:7, padding:'8px 10px', fontSize:12,
+                  color:'#f59e0b', cursor:'pointer', marginBottom:4,
+                  display:'flex', alignItems:'center', gap:8, textAlign:'left',
+                  fontWeight:600,
+                }}>
+                ★ Admin Panel
+              </button>
+            )}
+
             {/* Sign out */}
             <button
               onClick={async () => {
@@ -162,6 +180,13 @@ export default function UserMenu({ user }: { user: any }) {
           currentTier={tier}
           user={user}
           onUpgrade={handleUpgrade}
+        />
+      )}
+
+      {showAdmin && (
+        <AdminPanel
+          onClose={() => setShowAdmin(false)}
+          user={user}
         />
       )}
     </>
