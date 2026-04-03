@@ -11,22 +11,22 @@ const PAGE_SIZE = 1000
 async function fetchAllListings(filters: any) {
   let allRows: any[] = []
   let from = 0
-  
+
   while (true) {
     let query = supabase
       .from('listings')
-      .select('id,source,url,title,price,currency,price_period,property_type,size_sqm,location_raw,area,subregion,region,city,lat,lng,price_per_sqm,image_url,furnished,condition,view_type,floor_type,bedrooms,bathrooms,features,payment_type,lifestyle,scraped_at')
+      .select('id,source,url,title,price,currency,price_period,property_type,size_sqm,area,subregion,region,lat,lng,image_url,furnished,condition,view_type,floor_type,bedrooms,bathrooms,features,payment_type,lifestyle,building_age')
       .eq('is_active', true)
       .not('lat', 'is', null)
       .not('lng', 'is', null)
       .range(from, from + PAGE_SIZE - 1)
 
-    if (filters.minPrice)  query = query.gte('price', parseFloat(filters.minPrice))
-    if (filters.maxPrice)  query = query.lte('price', parseFloat(filters.maxPrice))
-    if (filters.type && filters.type !== 'all')           query = query.eq('property_type', filters.type)
-    if (filters.area && filters.area !== 'all')           query = query.eq('area', filters.area)
-    if (filters.region && filters.region !== 'all')       query = query.eq('region', filters.region)
-    if (filters.subregion && filters.subregion !== 'all') query = query.eq('subregion', filters.subregion)
+    if (filters.minPrice)   query = query.gte('price', parseFloat(filters.minPrice))
+    if (filters.maxPrice)   query = query.lte('price', parseFloat(filters.maxPrice))
+    if (filters.period && filters.period !== 'all') query = query.eq('price_period', filters.period)
+    if (filters.type && filters.type !== 'all')     query = query.eq('property_type', filters.type)
+    if (filters.area && filters.area !== 'all')     query = query.eq('area', filters.area)
+    if (filters.region && filters.region !== 'all') query = query.eq('region', filters.region)
     if (filters.furnished && filters.furnished !== 'all') query = query.eq('furnished', filters.furnished)
     if (filters.condition && filters.condition !== 'all') query = query.eq('condition', filters.condition)
     if (filters.bedrooms && filters.bedrooms !== 'all') {
@@ -38,7 +38,6 @@ async function fetchAllListings(filters: any) {
     const { data, error } = await query
     if (error) throw new Error(error.message)
     if (!data || data.length === 0) break
-
     allRows = allRows.concat(data)
     if (data.length < PAGE_SIZE) break
     from += PAGE_SIZE
@@ -49,13 +48,14 @@ async function fetchAllListings(filters: any) {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
+
   const filters = {
     minPrice:  searchParams.get('min_price'),
     maxPrice:  searchParams.get('max_price'),
+    period:    searchParams.get('period'),
     type:      searchParams.get('type'),
     area:      searchParams.get('area'),
     region:    searchParams.get('region'),
-    subregion: searchParams.get('subregion'),
     furnished: searchParams.get('furnished'),
     condition: searchParams.get('condition'),
     bedrooms:  searchParams.get('bedrooms'),
@@ -65,30 +65,53 @@ export async function GET(req: NextRequest) {
   try {
     const rows = await fetchAllListings(filters)
 
-    // Compute area average price/sqm inline
-    const areaStats: Record<string, number[]> = {}
+    // Compute price_per_sqm and area averages inline
+    // Separate land vs built spaces for valuation
+    const areaStats: Record<string, { built: number[], land: number[] }> = {}
+
     rows.forEach((r: any) => {
-      if (r.area && r.price_per_sqm) {
-        if (!areaStats[r.area]) areaStats[r.area] = []
-        areaStats[r.area].push(Number(r.price_per_sqm))
+      if (!r.area || !r.price || !r.size_sqm) return
+      const ppsqm = Math.round(r.price / r.size_sqm)
+      r._ppsqm = ppsqm
+      if (!areaStats[r.area]) areaStats[r.area] = { built: [], land: [] }
+      if (r.property_type === 'land') {
+        areaStats[r.area].land.push(ppsqm)
+      } else {
+        areaStats[r.area].built.push(ppsqm)
       }
     })
-    const avgMap: Record<string, number> = {}
-    Object.entries(areaStats).forEach(([a, prices]) => {
-      avgMap[a] = Math.round(prices.reduce((s, p) => s + p, 0) / prices.length)
+
+    const avgMap: Record<string, { built: number, land: number }> = {}
+    Object.entries(areaStats).forEach(([area, stats]) => {
+      avgMap[area] = {
+        built: stats.built.length >= 3
+          ? Math.round(stats.built.reduce((s, p) => s + p, 0) / stats.built.length)
+          : 0,
+        land: stats.land.length >= 3
+          ? Math.round(stats.land.reduce((s, p) => s + p, 0) / stats.land.length)
+          : 0,
+      }
     })
 
     const features = rows.map((r: any) => {
-      const avg = avgMap[r.area]
+      const ppsqm = r._ppsqm
+      const isLand = r.property_type === 'land'
+      const avg = avgMap[r.area]?.[isLand ? 'land' : 'built'] || 0
+      const sampleSize = isLand
+        ? areaStats[r.area]?.land.length || 0
+        : areaStats[r.area]?.built.length || 0
+
       let valuation = 'unknown'
-      if (r.price_per_sqm && avg && areaStats[r.area]?.length >= 3) {
-        const diff = ((Number(r.price_per_sqm) - avg) / avg) * 100
+      if (ppsqm && avg && sampleSize >= 3) {
+        const diff = ((ppsqm - avg) / avg) * 100
         valuation = diff > 15 ? 'overvalued' : diff < -15 ? 'undervalued' : 'fair'
       }
+
+      const { lat, lng, ...rest } = r
       return {
         type: 'Feature',
-        geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
-        properties: { ...r, lat: undefined, lng: undefined, valuation }
+        geometry: { type: 'Point', coordinates: [lng, lat] },
+        properties: { ...rest, price_per_sqm: ppsqm, valuation }
       }
     })
 

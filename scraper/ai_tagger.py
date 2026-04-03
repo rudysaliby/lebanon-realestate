@@ -51,8 +51,10 @@ async def extract_tags(title: str, description: str | None, client: httpx.AsyncC
             return {}
         data = resp.json()
         if resp.status_code != 200 or "content" not in data:
+            print(f"  [Tags] API error {resp.status_code}: {str(data)[:100]}")
             return {}
         text = data["content"][0]["text"].strip().replace("```json", "").replace("```", "").strip()
         return json.loads(text)
-    except Exception:
+    except Exception as e:
+        print(f"  [Tags] Exception: {e}")
         return {}

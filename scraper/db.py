@@ -107,7 +107,7 @@ async def upsert_listings(listings) -> int:
     if skipped_price:    print(f"[DB] Skipped {skipped_price} listings — no price")
     if skipped_location: print(f"[DB] Skipped {skipped_location} listings — no location")
 
-    chunk_size = 50
+    chunk_size = 500
     total = 0
     async with httpx.AsyncClient(timeout=60) as client:
         for i in range(0, len(rows), chunk_size):
@@ -124,8 +124,9 @@ async def upsert_listings(listings) -> int:
             )
             if resp.status_code in (200, 201):
                 total += len(chunk)
-                print(f"[DB] Saved {len(chunk)} rows (total: {total})")
+                print(f"\r  [DB] Saved {total}/{len(rows)} rows...", end="", flush=True)
             else:
-                print(f"[DB] Error: {resp.status_code} - {resp.text[:300]}")
+                print(f"\n  [DB] Error {resp.status_code}: {resp.text[:200]}", flush=True)
 
+    print(f"\r  [DB] Saved {total} rows.{" "*20}")  # clear the line
     return total

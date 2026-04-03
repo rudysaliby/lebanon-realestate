@@ -34,5 +34,53 @@
     "lng": 35.586018,
     "region": null,
     "subregion": null
+  },
+  "jouret termos": {
+    "lat": 34.044569,
+    "lng": 35.720068,
+    "region": "Keserwan-Jbeil",
+    "subregion": "Keserwan"
+  },
+  "cyprus": {
+    "lat": 33.854721,
+    "lng": 35.862285,
+    "region": null,
+    "subregion": null
+  },
+  "greece": {
+    "lat": 33.854721,
+    "lng": 35.862285,
+    "region": null,
+    "subregion": null
+  },
+  "bchelli": {
+    "lat": 34.103909,
+    "lng": 35.712848,
+    "region": null,
+    "subregion": null
+  },
+  "zandouka": {
+    "lat": 33.865379,
+    "lng": 35.638616,
+    "region": "Mount Lebanon",
+    "subregion": "Baabda"
+  },
+  "bzommar": {
+    "lat": 33.987247,
+    "lng": 35.682816,
+    "region": null,
+    "subregion": null
+  },
+  "france": {
+    "lat": 33.854721,
+    "lng": 35.862285,
+    "region": null,
+    "subregion": null
+  },
+  "spain": {
+    "lat": 33.854721,
+    "lng": 35.862285,
+    "region": null,
+    "subregion": null
   }
 }

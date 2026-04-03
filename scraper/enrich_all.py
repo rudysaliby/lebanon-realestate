@@ -373,7 +373,9 @@ Guidelines:
         print(f"\n[Tags] {len(untagged)} listings need tag extraction")
 
         tag_updated = 0
-        tag_sem = asyncio.Semaphore(5)
+        tag_sem = asyncio.Semaphore(20)
+        # Use dedicated client for Anthropic — no shared headers/base_url
+        ai_client = httpx.AsyncClient(timeout=30)
 
         async def enrich_tags(listing):
             nonlocal tag_updated
@@ -382,8 +384,7 @@ Guidelines:
             if not title: return
 
             async with tag_sem:
-                await asyncio.sleep(0.3)
-                tags = await extract_tags(title, desc, client)
+                tags = await extract_tags(title, desc, ai_client)
 
             if not tags:
                 await update_listing(listing["id"], {"ai_tags_done": True}, client)
@@ -404,12 +405,15 @@ Guidelines:
             ok = await update_listing(listing["id"], updates, client)
             if ok: tag_updated += 1
 
-        for i in range(0, len(untagged), 50):
-            batch = untagged[i:i+50]
+        for i in range(0, len(untagged), 200):
+            batch = untagged[i:i+200]
             await asyncio.gather(*[enrich_tags(l) for l in batch])
-            if (i+50) % 200 == 0:
-                print(f"  [Tags] {min(i+50, len(untagged))}/{len(untagged)} processed")
+            done = min(i+200, len(untagged))
+            pct  = round(done / len(untagged) * 100)
+            print(f"\r  [Tags] {done}/{len(untagged)} ({pct}%)  extracted={tag_updated}", end="", flush=True)
+        print()  # newline after r loop
 
+        await ai_client.aclose()
         print(f"[Tags] Complete — {tag_updated}/{len(untagged)} extracted")
 
     print(f"\n{'='*55}")
