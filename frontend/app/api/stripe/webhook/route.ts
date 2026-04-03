@@ -1,57 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SECRET_KEY!
 )
 
-const PLAN_TOKENS: Record<string, { tier: string, tokens: number }> = {
-  'price_explorer_monthly': { tier: 'explorer', tokens: 50 },
-  'price_analyst_monthly':  { tier: 'analyst',  tokens: 300 },
+const PLAN_MAP: Record<string, { tier: string, tokens: number }> = {
+  '945033': { tier: 'explorer', tokens: 50 },
+  '945035': { tier: 'analyst',  tokens: 300 },
+}
+
+function verifySignature(payload: string, secret: string, signature: string): boolean {
+  const hmac = crypto.createHmac('sha256', secret).update(payload).digest('hex')
+  return hmac === signature
 }
 
 export async function POST(req: NextRequest) {
-  if (!process.env.STRIPE_SECRET_KEY) {
-    return NextResponse.json({ error: 'Stripe not configured' }, { status: 503 })
+  const body      = await req.text()
+  const signature = req.headers.get('x-signature') || ''
+  const secret    = process.env.LEMONSQUEEZY_WEBHOOK_SECRET || ''
+
+  if (secret && !verifySignature(body, secret, signature)) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
-  const Stripe = (await import('stripe')).default
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2024-06-20' })
+  const event = JSON.parse(body)
+  const eventName = event.meta?.event_name
 
-  const sig  = req.headers.get('stripe-signature')!
-  const body = await req.text()
-
-  let event
-  try {
-    event = stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET!)
-  } catch (err: any) {
-    return NextResponse.json({ error: `Webhook error: ${err.message}` }, { status: 400 })
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object as any
-    const userId  = session.client_reference_id
-    const planId  = session.metadata?.planId
-    const plan    = PLAN_TOKENS[planId]
+  if (eventName === 'order_created' || eventName === 'subscription_created') {
+    const variantId = String(event.data?.attributes?.variant_id || event.data?.relationships?.variant?.data?.id || '')
+    const userId    = event.meta?.custom_data?.user_id
+    const plan      = PLAN_MAP[variantId]
 
     if (userId && plan) {
-      // Update user_profiles table
+      // Update user_profiles
       await supabaseAdmin
         .from('user_profiles')
         .upsert({ id: userId, tier: plan.tier, tokens: plan.tokens }, { onConflict: 'id' })
 
-      // Also update auth metadata so app sees it immediately
+      // Update auth metadata
       await supabaseAdmin.auth.admin.updateUserById(userId, {
         user_metadata: { tier: plan.tier, tokens: plan.tokens }
       })
+
+      console.log(`✓ Upgraded user ${userId} to ${plan.tier}`)
     }
   }
 
-  if (event.type === 'customer.subscription.deleted') {
-    // Downgrade to free on cancellation
-    const sub    = event.data.object as any
-    const userId = sub.metadata?.userId
+  if (eventName === 'subscription_cancelled' || eventName === 'subscription_expired') {
+    const userId = event.meta?.custom_data?.user_id
     if (userId) {
       await supabaseAdmin
         .from('user_profiles')
@@ -61,6 +60,8 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin.auth.admin.updateUserById(userId, {
         user_metadata: { tier: 'free', tokens: 0 }
       })
+
+      console.log(`↓ Downgraded user ${userId} to free`)
     }
   }
 
