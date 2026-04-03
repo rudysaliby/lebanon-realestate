@@ -257,7 +257,7 @@ class RealEstateLBScraper(BaseScraper):
             log(f"[RELB] Cookie fetch failed: {e}")
 
         # ── Step 2b: Fetch HTML pages with httpx (40 parallel) ────────────────
-        det_sem   = asyncio.Semaphore(40) first
+        det_sem   = asyncio.Semaphore(40)
         completed = 0
         total_det = len(all_docs)
         lock      = asyncio.Lock()
