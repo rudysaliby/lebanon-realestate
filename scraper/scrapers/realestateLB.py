@@ -1,23 +1,19 @@
 """
-realestate.com.lb scraper — clean systematic version.
+realestate.com.lb scraper — fast httpx page scraping version.
 
-MANDATORY fields extracted:
-- price, size_sqm — from listing card
-- property_type — from detail API type field
-- lat/lng — from detail API community coords
-- area/subregion/region — from detail API community hierarchy
-- price_period — from price_type_id (1=sale, 2=monthly)
+Strategy (same as OLX):
+1. Listing cards API → get all listing URLs + basic data (fast, parallel)
+2. httpx fetches each listing HTML page (40 parallel, no rate limit)
+3. Extract all data from embedded JSON in HTML
 
-OPTIONAL fields:
-- bedrooms/bathrooms — from card (bedroom_value, bathroom_value)
-- furnished — from card
-- amenities/features — from detail API
-- floor, condition — from detail API
+Why faster than detail API:
+- Detail API: rate limited to ~8 concurrent, needs 0.1s delay
+- HTML pages: no rate limit, 40 concurrent → ~3x faster
+- All data in one request: coords + amenities + type + floor
 
-Strategy:
-- Card: price, size, bedrooms, bathrooms, furnished, title, images
-- Detail API (per listing): coords + amenities + type + floor
-- Semaphore(5) + 0.3s delay to avoid 429 rate limiting
+Fields extracted from HTML:
+MANDATORY: lat/lng (community), area/subregion/region, price, size, type
+OPTIONAL: amenities, floor, condition, furnished, bedrooms, bathrooms
 """
 import asyncio
 import re
@@ -29,14 +25,21 @@ BASE     = "https://www.realestate.com.lb"
 LIST_URL = f"{BASE}/laravel/api/member/properties"
 
 HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
+API_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "application/json, text/html",
+    "Accept": "application/json",
     "Referer": "https://www.realestate.com.lb/",
 }
 
 AMENITY_MAP = {
-    "swimming pool": "pool", "pool": "pool",
-    "gym": "gym", "fitness": "gym",
+    "swimming pool": "pool", "pool": "pool", "shared pool": "pool",
+    "gym": "gym", "fitness": "gym", "shared gym": "gym",
     "parking": "parking", "covered parking": "parking",
     "elevator": "elevator", "lift": "elevator",
     "generator": "generator", "backup generator": "generator",
@@ -64,18 +67,78 @@ def extract_area_from_url(url: str) -> str | None:
     m = re.search(r'for-(?:sale|rent)-(.+?)-lebanon', url)
     return m.group(1).replace('-', ' ').title() if m else None
 
-def parse_amenities(amenities_list: list) -> tuple:
-    features = set()
+def parse_amenities_from_html(html: str) -> tuple:
+    """Extract amenities from the embedded JSON in listing HTML."""
+    features  = set()
     lifestyle = set()
-    for a in amenities_list:
-        name = a.lower()
-        mapped = AMENITY_MAP.get(name)
-        if mapped: features.add(mapped)
-        for kw in LIFESTYLE_KEYWORDS:
-            if kw in name: lifestyle.add(kw)
+    # Match all name_en values in amenities array
+    amenity_section = re.search(r'"amenities"\s*:\s*\[(.*?)\]', html, re.DOTALL)
+    if amenity_section:
+        names = re.findall(r'"name_en"\s*:\s*"([^"]+)"', amenity_section.group(1))
+        for name in names:
+            n = name.lower()
+            mapped = AMENITY_MAP.get(n)
+            if mapped: features.add(mapped)
+            for kw in LIFESTYLE_KEYWORDS:
+                if kw in n: lifestyle.add(kw)
     return list(features), list(lifestyle)
 
-def parse_view(title: str, description: str) -> list:
+def parse_coords_from_html(html: str) -> tuple:
+    """Extract community → district → province coords from HTML."""
+    lat = lng = area = subregion = region = None
+
+    # Community object (has name + coords)
+    comm_m = re.search(
+        r'"community"\s*:\s*\{[^}]*"name_en"\s*:\s*"([^"]+)"[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"',
+        html
+    )
+    if not comm_m:
+        comm_m = re.search(
+            r'"community"\s*:\s*\{[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"[^}]*"name_en"\s*:\s*"([^"]+)"',
+            html
+        )
+        if comm_m:
+            clat, clng, cname = comm_m.group(1), comm_m.group(2), comm_m.group(3)
+        else:
+            clat = clng = cname = None
+    else:
+        cname, clat, clng = comm_m.group(1), comm_m.group(2), comm_m.group(3)
+
+    if clat and validate_lb(clat, clng or "0"):
+        lat, lng = float(clat), float(clng)
+        area = cname
+
+    # District name
+    dist_m = re.search(r'"district"\s*:\s*\{[^}]*"name_en"\s*:\s*"([^"]+)"', html)
+    if dist_m:
+        subregion = dist_m.group(1).replace(" district","").replace(" District","") or None
+
+    # Province name
+    prov_m = re.search(r'"province"\s*:\s*\{[^}]*"name_en"\s*:\s*"([^"]+)"', html)
+    if prov_m:
+        region = prov_m.group(1).replace(" Governorate","") or None
+
+    # Fallback: use district coords if no community coords
+    if not lat:
+        dist_coords = re.search(
+            r'"district"\s*:\s*\{[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"',
+            html
+        )
+        if dist_coords and validate_lb(dist_coords.group(1), dist_coords.group(2)):
+            lat, lng = float(dist_coords.group(1)), float(dist_coords.group(2))
+
+    # Fallback: province coords
+    if not lat:
+        prov_coords = re.search(
+            r'"province"\s*:\s*\{[^}]*"latitude"\s*:\s*"([\d.]+)"[^}]*"longitude"\s*:\s*"([\d.]+)"',
+            html
+        )
+        if prov_coords and validate_lb(prov_coords.group(1), prov_coords.group(2)):
+            lat, lng = float(prov_coords.group(1)), float(prov_coords.group(2))
+
+    return lat, lng, area, subregion, region
+
+def parse_view(title: str, description: str = "") -> list:
     text = f"{title} {description}".lower()
     views = []
     for kw, tag in VIEW_KEYWORDS.items():
@@ -83,7 +146,12 @@ def parse_view(title: str, description: str) -> list:
             views.append(tag)
     return views[:3]
 
-def parse_condition(title: str) -> str | None:
+def parse_condition(html: str, title: str) -> str | None:
+    m = re.search(r'"completion_status"\s*:\s*"([^"]+)"', html)
+    if m:
+        s = m.group(1).lower()
+        if "under" in s or "construction" in s or "off" in s: return "under-construction"
+        if "ready" in s or "complete" in s: return "well-maintained"
     t = (title or "").lower()
     if "under construction" in t or "off plan" in t: return "under-construction"
     if "new" in t and "building" in t: return "new"
@@ -107,14 +175,14 @@ class RealEstateLBScraper(BaseScraper):
         def log(msg):
             if not progress: print(msg)
 
+        # ── Step 1: Fetch listing pages via API (fast JSON) ───────────────────
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=20, follow_redirects=True,
-            limits=httpx.Limits(max_connections=15, max_keepalive_connections=10)
-        ) as client:
+            headers=API_HEADERS, timeout=20, follow_redirects=True,
+            limits=httpx.Limits(max_connections=15)
+        ) as api_client:
 
-            # ── Step 1: Fetch page 1 to detect total ─────────────────────────
             try:
-                resp = await client.get(LIST_URL, params={
+                resp = await api_client.get(LIST_URL, params={
                     "pg": 1, "sort": "listing_level", "ct": 1, "direction": "asc"
                 })
                 resp.raise_for_status()
@@ -126,13 +194,12 @@ class RealEstateLBScraper(BaseScraper):
                 num_found   = page_data.get("numFound", 0)
                 per_page    = len(first_docs)
                 total_pages = min(-(-num_found // per_page), max_pages)
-                log(f"[RELB] {num_found} listings, {total_pages} pages to fetch")
+                log(f"[RELB] {num_found} listings, {total_pages} pages")
                 if progress: progress.update(1, f"RELB page 1/{total_pages} found:{per_page}")
             except Exception as e:
                 log(f"[RELB] Page 1 failed: {e}")
                 return []
 
-            # ── Step 2: Fetch remaining pages in parallel ─────────────────────
             all_docs = list(first_docs)
             if total_pages > 1:
                 page_sem = asyncio.Semaphore(8)
@@ -140,16 +207,15 @@ class RealEstateLBScraper(BaseScraper):
                 async def fetch_page(page_num: int):
                     async with page_sem:
                         try:
-                            r = await client.get(LIST_URL, params={
+                            r = await api_client.get(LIST_URL, params={
                                 "pg": page_num, "sort": "listing_level", "ct": 1, "direction": "asc"
                             })
                             docs = r.json().get("data", {}).get("docs", [])
                             if progress: progress.update(1, f"RELB page {page_num}/{total_pages} found:{len(docs)}")
                             else: log(f"[RELB] Page {page_num}/{total_pages}: {len(docs)}")
                             return docs
-                        except Exception as e:
+                        except:
                             if progress: progress.update(1, f"RELB page {page_num} error")
-                            else: log(f"[RELB] Page {page_num} error: {e}")
                             return []
 
                 page_results = await asyncio.gather(
@@ -158,80 +224,51 @@ class RealEstateLBScraper(BaseScraper):
                 for docs in page_results:
                     all_docs.extend(docs)
 
-            log(f"[RELB] {len(all_docs)} listings — fetching details for coords + amenities...")
+        log(f"[RELB] {len(all_docs)} listings — fetching HTML pages for full data...")
 
-            # ── Step 3: Fetch detail per listing for coords + amenities ───────
-            # Rate limited: Semaphore(5) + 0.3s delay
-            det_sem   = asyncio.Semaphore(8)
-            completed = 0
-            total_det = len(all_docs)
-            lock      = asyncio.Lock()
-            det_start = time.time()
-            listings  = []
+        # ── Step 2: Fetch HTML pages with httpx (40 parallel, no rate limit) ──
+        det_sem   = asyncio.Semaphore(40)
+        completed = 0
+        total_det = len(all_docs)
+        lock      = asyncio.Lock()
+        det_start = time.time()
+        listings  = []
 
-            async def fetch_detail(basic: dict) -> RawListing | None:
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=15, follow_redirects=True,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=40)
+        ) as client:
+
+            async def fetch_listing_page(basic: dict) -> RawListing | None:
                 nonlocal completed
                 async with det_sem:
                     result = None
                     try:
-                        listing_id = basic.get("id")
-                        if not listing_id:
+                        url_path = basic.get("url", "")
+                        if not url_path:
                             return None
 
-                        await asyncio.sleep(0.1)  # Small delay to avoid 429
+                        # Build full listing URL
+                        page_url = f"{BASE}/en{url_path}" if not url_path.startswith("http") else url_path
 
-                        # Fetch detail with retry on 429
-                        prop = None
-                        for attempt in range(3):
-                            r = await client.get(
-                                f"{BASE}/laravel/api/member/properties/{listing_id}",
-                                timeout=15
-                            )
-                            if r.status_code == 200:
-                                prop = r.json()
-                                break
-                            elif r.status_code == 429:
-                                wait = (attempt + 1) * 3
-                                await asyncio.sleep(wait)
-                            else:
-                                break  # 404 etc — don't retry
+                        resp = await client.get(page_url)
+                        if resp.status_code != 200:
+                            return None
+                        html = resp.text
 
-                        # ── Coords from detail ────────────────────────────────
-                        lat = lng = area = subregion = region = None
-                        if prop:
-                            community = prop.get("community") or {}
-                            district  = community.get("district") or {}
-                            province  = district.get("province") or {}
-
-                            if community.get("latitude") and validate_lb(community["latitude"], community.get("longitude", 0)):
-                                lat, lng  = float(community["latitude"]), float(community["longitude"])
-                                area      = community.get("name_en")
-                                subregion = (district.get("name_en") or "").replace(" district","").replace(" District","") or None
-                                region    = (province.get("name_en") or "").replace(" Governorate","") or None
-                            elif district.get("latitude") and validate_lb(district["latitude"], district.get("longitude", 0)):
-                                lat, lng  = float(district["latitude"]), float(district["longitude"])
-                                subregion = (district.get("name_en") or "").replace(" district","").replace(" District","") or None
-                                region    = (province.get("name_en") or "").replace(" Governorate","") or None
-                            elif province.get("latitude") and validate_lb(province["latitude"], province.get("longitude", 0)):
-                                lat, lng = float(province["latitude"]), float(province["longitude"])
-                                region   = (province.get("name_en") or "").replace(" Governorate","") or None
-
-                        url_path = basic.get("url", "")
+                        # ── Coords from embedded JSON ─────────────────────────
+                        lat, lng, area, subregion, region = parse_coords_from_html(html)
                         if not area:
                             area = extract_area_from_url(url_path)
 
-                        # ── All other data from card ──────────────────────────
+                        # ── Amenities ─────────────────────────────────────────
+                        features, lifestyle = parse_amenities_from_html(html)
+
+                        # ── Tags ──────────────────────────────────────────────
                         title       = basic.get("title_en") or ""
                         description = basic.get("description_en") or ""
-
-                        # Amenities only from detail
-                        amenity_names = []
-                        if prop:
-                            amenity_names = [a.get("name_en","") for a in (prop.get("amenities") or [])]
-                        features, lifestyle = parse_amenities(amenity_names)
                         views     = parse_view(title, description)
-                        condition = parse_condition(title)
-
+                        condition = parse_condition(html, title)
                         furnished = parse_furnished(basic.get("furnished"))
 
                         bedrooms  = basic.get("bedroom_value")
@@ -241,36 +278,35 @@ class RealEstateLBScraper(BaseScraper):
                         try: bathrooms = int(bathrooms) if bathrooms else None
                         except: bathrooms = None
 
+                        # Floor from HTML
                         floor_type = None
-                        if prop and prop.get("floor") is not None:
+                        floor_m = re.search(r'"floor"\s*:\s*(-?\d+)', html)
+                        if floor_m:
                             try:
-                                f = int(prop["floor"])
+                                f = int(floor_m.group(1))
                                 if f <= 0:   floor_type = "ground"
                                 elif f >= 8: floor_type = "high-floor"
                             except: pass
+
+                        # Property type from HTML
+                        type_m = re.search(r'"type"\s*:\s*\{[^}]*"name_en"\s*:\s*"([^"]+)"', html)
+                        type_name = type_m.group(1) if type_m else None
 
                         # Price period
                         price_type_id = basic.get("price_type_id", 1)
                         period = "monthly" if price_type_id == 2 else "sale"
 
-                        # Property type from detail
-                        type_name = None
-                        if prop:
-                            type_name = (prop.get("type") or prop.get("category") or {}).get("name_en")
-
                         # Image
                         images  = basic.get("images") or []
                         img_url = images[0].get("url") if images else None
 
-                        price = basic.get("price")
+                        price    = basic.get("price")
+                        size_sqm = float(basic["area"]) if basic.get("area") else None
+
                         if not price:
                             return None
 
-                        size_sqm = float(basic["area"]) if basic.get("area") else None
-
-                        # Price suspect: price < 15000 on a sale listing
                         price_suspect = (price < 15000 and period == "sale")
-
                         url = f"{BASE}{url_path}" if not url_path.startswith("http") else url_path
 
                         listing = RawListing(
@@ -318,7 +354,7 @@ class RealEstateLBScraper(BaseScraper):
 
                     return result
 
-            all_results = await asyncio.gather(*[fetch_detail(doc) for doc in all_docs])
+            all_results = await asyncio.gather(*[fetch_listing_page(doc) for doc in all_docs])
             listings = [l for l in all_results if l]
 
         with_coords   = sum(1 for r in listings if r.lat)
