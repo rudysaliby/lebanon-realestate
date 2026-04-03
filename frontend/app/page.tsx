@@ -34,10 +34,14 @@ const DEFAULT_FILTERS: Filters = {
   furnished: 'all', condition: 'all', region: 'all',
 }
 
+const MODE_KEY = 'iqari-mode'
+
 function AppContent() {
   const { theme } = useTheme()
   const t = T[theme]
   const { user } = useUser()
+
+  // Persist mode in localStorage — survives auth redirects
   const [mode, setMode] = useState<Mode | null>(null)
   const [tab, setTab] = useState<'map' | 'insights'>('map')
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
@@ -46,6 +50,26 @@ function AppContent() {
   const [loading, setLoading] = useState(false)
   const [count, setCount] = useState(0)
   const [showAuth, setShowAuth] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
+
+  // Restore mode from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MODE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved) as Mode
+        if (parsed.period && parsed.type) setMode(parsed)
+      }
+    } catch {}
+    setHydrated(true)
+  }, [])
+
+  // Save mode to localStorage whenever it changes
+  const handleSetMode = (m: Mode | null) => {
+    setMode(m)
+    if (m) localStorage.setItem(MODE_KEY, JSON.stringify(m))
+    else localStorage.removeItem(MODE_KEY)
+  }
 
   const fetchListings = useCallback(async () => {
     if (!mode) return
@@ -53,24 +77,28 @@ function AppContent() {
     const p = new URLSearchParams()
     p.set('period', mode.period)
     p.set('type_group', mode.type)
-    if (filters.minPrice)           p.set('min_price', filters.minPrice)
-    if (filters.maxPrice)           p.set('max_price', filters.maxPrice)
+    if (filters.minPrice) p.set('min_price', filters.minPrice)
+    if (filters.maxPrice) p.set('max_price', filters.maxPrice)
     if (filters.bedrooms !== 'all') p.set('bedrooms', filters.bedrooms)
     if (filters.furnished !== 'all') p.set('furnished', filters.furnished)
     if (filters.condition !== 'all') p.set('condition', filters.condition)
-    if (filters.region !== 'all')   p.set('region', filters.region)
+    if (filters.region !== 'all') p.set('region', filters.region)
     try {
       const res = await fetch(`/api/listings?${p}`)
       const data = await res.json()
       setGeojson(data)
       setCount(data?.features?.length || 0)
-    } catch (e) {}
+    } catch {}
     setLoading(false)
   }, [mode, filters])
 
   useEffect(() => { fetchListings() }, [fetchListings])
 
-  if (!mode) return <ModeSelector onSelect={setMode} />
+  // Don't render until hydrated (avoids flicker)
+  if (!hydrated) return null
+
+  // Show mode selector if no mode chosen
+  if (!mode) return <ModeSelector onSelect={handleSetMode} />
 
   const modeLabel = `${mode.period === 'sale' ? 'For Sale' : 'For Rent'} · ${
     mode.type === 'residential' ? 'Residential' :
@@ -78,40 +106,40 @@ function AppContent() {
   }`
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: t.bg, fontFamily: "'DM Sans', sans-serif", transition: 'background 0.3s' }}>
-
+    <div style={{
+      height: '100vh', display: 'flex', flexDirection: 'column',
+      background: t.bg, fontFamily: "'DM Sans', sans-serif",
+      transition: 'background 0.3s',
+    }}>
       {/* Header */}
       <header style={{
         background: t.bgPanel,
         borderBottom: `1px solid ${t.border}`,
-        padding: '0 20px',
-        height: 52,
+        padding: '0 20px', height: 52,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         zIndex: 20, flexShrink: 0,
         boxShadow: theme === 'light' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
         transition: 'background 0.3s, border-color 0.3s',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ cursor: 'pointer' }} onClick={() => setMode(null)}>
+          <div style={{ cursor: 'pointer' }} onClick={() => handleSetMode(null)}>
             <IqariLogo size="sm" />
           </div>
 
           <div style={{ width: 1, height: 18, background: t.border }} />
 
-          {/* Mode badge */}
-          <button onClick={() => setMode(null)} style={{
-            background: t.accentBg,
-            border: `1px solid ${t.accentBorder}`,
-            borderRadius: 6, padding: '3px 10px',
-            fontSize: 11, fontWeight: 600, color: t.accent,
-            cursor: 'pointer', letterSpacing: '0.02em', textTransform: 'uppercase',
+          {/* Mode badge — click to change */}
+          <button onClick={() => handleSetMode(null)} style={{
+            background: t.accentBg, border: `1px solid ${t.accentBorder}`,
+            borderRadius: 6, padding: '3px 10px', fontSize: 11,
+            fontWeight: 600, color: t.accent, cursor: 'pointer',
+            letterSpacing: '0.02em', textTransform: 'uppercase',
           }}>
             {modeLabel} ↗
           </button>
 
           <div style={{ width: 1, height: 18, background: t.border }} />
 
-          {/* Tabs */}
           {(['map', 'insights'] as const).map(tb => (
             <button key={tb} onClick={() => setTab(tb)} style={{
               display: 'flex', alignItems: 'center', gap: 5,
@@ -145,7 +173,6 @@ function AppContent() {
               background: '#16a34a', border: 'none', borderRadius: 7,
               padding: '6px 14px', fontSize: 12, fontWeight: 600,
               color: '#fff', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 6,
             }}>
               Sign In
             </button>
@@ -153,16 +180,10 @@ function AppContent() {
         </div>
       </header>
 
-      {/* Filter bar */}
       {tab === 'map' && (
-        <FilterBar
-          filters={filters}
-          mode={mode}
-          onChange={f => { setAreaData(null); setFilters(f) }}
-        />
+        <FilterBar filters={filters} mode={mode} onChange={f => { setAreaData(null); setFilters(f) }} />
       )}
 
-      {/* Main */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {tab === 'map' ? (
           <>
@@ -170,11 +191,9 @@ function AppContent() {
 
             {areaData && (
               <AreaPanel
-                areaData={areaData}
-                mode={mode}
+                areaData={areaData} mode={mode}
                 onClose={() => setAreaData(null)}
-                user={user}
-                onSignIn={() => setShowAuth(true)}
+                user={user} onSignIn={() => setShowAuth(true)}
               />
             )}
 

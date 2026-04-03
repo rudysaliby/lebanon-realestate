@@ -11,9 +11,15 @@ export function useUser() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Handle OAuth redirect — token comes back in URL hash
     supabase.auth.getSession().then(({ data }) => {
       setUser(data.session?.user || null)
       setLoading(false)
+
+      // Clean the URL hash after OAuth redirect (removes #access_token=... from URL)
+      if (window.location.hash.includes('access_token')) {
+        window.history.replaceState(null, '', window.location.pathname)
+      }
     })
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {

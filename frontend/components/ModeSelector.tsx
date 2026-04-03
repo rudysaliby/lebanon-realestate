@@ -134,9 +134,5 @@ function OptionCard({ icon, label, sub, onClick, theme, t }: any) {
 }
 
 export default function ModeSelector({ onSelect }: { onSelect: (m: Mode) => void }) {
-  return (
-    <ThemeProvider>
-      <ModeSelectorContent onSelect={onSelect} />
-    </ThemeProvider>
-  )
+  return <ModeSelectorContent onSelect={onSelect} />
 }
