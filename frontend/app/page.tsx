@@ -206,7 +206,7 @@ function AppContent() {
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {tab === 'map' ? (
           <>
-            <MapView geojson={geojson} mode={mode} onAreaClick={setAreaData} user={user} />
+            <MapView geojson={geojson} mode={mode} onAreaClick={setAreaData} />
 
             {areaData && (
               <AreaPanel
