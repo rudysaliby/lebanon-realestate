@@ -43,9 +43,15 @@ HEADERS = {
 }
 
 def parse_params(html):
-    return {k: v for k, v in re.findall(
+    # Use FIRST occurrence of each key — page contains related listings at bottom
+    # which would overwrite the actual listing's values if we used a dict comprehension
+    result = {}
+    for k, v in re.findall(
         r'"attribute"\s*:\s*"([^"]+)"\s*,\s*"formattedValue"\s*:\s*"([^"]+)"', html
-    )}
+    ):
+        if k not in result:  # first match wins
+            result[k] = v
+    return result
 
 def parse_geo(html):
     m = re.search(r'"geography"\s*:\s*\{"lat"\s*:([\d.]+)\s*,\s*"lng"\s*:([\d.]+)', html)
