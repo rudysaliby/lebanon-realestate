@@ -253,8 +253,15 @@ class OLXScraper(BaseScraper):
                             try: description = desc_m.group(1).encode().decode('unicode_escape')[:500]
                             except: description = desc_m.group(1)[:500]
 
-                        img_m   = re.search(r'"url"\s*:\s*"(https://[^"]+\.(?:jpg|jpeg|webp)[^"]*)"', html)
-                        img_url = img_m.group(1) if img_m else None
+                        # OLX stores photos as {"photos":[{"id":12345,...}]}
+                        # Images at https://images.olx.com.lb/thumbnails/{id}-800x600.webp
+                        photo_m = re.search(r'"photos"\s*:\s*\[\s*\{[^}]*"id"\s*:\s*(\d+)', html)
+                        if photo_m:
+                            img_url = f"https://images.olx.com.lb/thumbnails/{photo_m.group(1)}-800x600.webp"
+                        else:
+                            # Fallback: try direct thumbnail URL in HTML
+                            thumb_m = re.search(r'https://images\.olx\.com\.lb/thumbnails/(\d+)-\d+x\d+\.\w+', html)
+                            img_url = thumb_m.group(0) if thumb_m else None
 
                         views     = parse_view(title, description or "")
                         lifestyle = parse_lifestyle(title)
