@@ -43,6 +43,7 @@ function AppContent() {
 
   // Persist mode in localStorage — survives auth redirects
   const [mode, setMode] = useState<Mode | null>(null)
+  const [showDealsOnly, setShowDealsOnly] = useState(true)
   const [tab, setTab] = useState<'map' | 'insights'>('map')
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
   const [geojson, setGeojson] = useState<any>(null)
@@ -210,7 +211,7 @@ function AppContent() {
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {tab === 'map' ? (
           <>
-            <MapView geojson={geojson} mode={mode} onAreaClick={setAreaData} />
+            <MapView geojson={geojson} mode={mode} onAreaClick={setAreaData} showDealsOnly={showDealsOnly} />
 
             {areaData && (
               <AreaPanel
@@ -220,28 +221,51 @@ function AppContent() {
               />
             )}
 
-            {/* Legend */}
+            {/* Map toggle + legend */}
             <div style={{
               position: 'absolute', bottom: 28, left: 16,
-              background: theme === 'dark' ? 'rgba(15,15,15,0.92)' : 'rgba(255,255,255,0.95)',
-              backdropFilter: 'blur(12px)',
-              border: `1px solid ${t.border}`,
-              borderRadius: 10, padding: '10px 14px',
-              display: 'flex', flexDirection: 'column', gap: 6,
-              boxShadow: t.shadow,
+              display: 'flex', flexDirection: 'column', gap: 8,
             }}>
-              <span style={{ fontSize: 10, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Price/sqm</span>
-              {[
-                { color: '#4ade80', label: 'Below market' },
-                { color: '#facc15', label: 'Fair market' },
-                { color: '#f87171', label: 'Above market' },
-                { color: '#9ca3af', label: 'No data' },
-              ].map(({ color, label }) => (
-                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: color }} />
-                  <span style={{ fontSize: 11, color: t.textSub }}>{label}</span>
+              {/* All listings / Good deals toggle */}
+              <div style={{
+                background: theme === 'dark' ? 'rgba(15,15,15,0.95)' : 'rgba(255,255,255,0.97)',
+                backdropFilter: 'blur(12px)',
+                border: `1px solid ${t.border}`,
+                borderRadius: 10, padding: '6px',
+                display: 'flex', gap: 4,
+                boxShadow: t.shadow,
+              }}>
+                {[
+                  { val: true,  label: '🎯 Good Deals' },
+                  { val: false, label: '🏘 All Listings' },
+                ].map(({ val, label }) => (
+                  <button key={String(val)} onClick={() => { setShowDealsOnly(val); setAreaData(null) }} style={{
+                    padding: '6px 12px', borderRadius: 7, fontSize: 11, fontWeight: 600,
+                    border: 'none', cursor: 'pointer',
+                    background: showDealsOnly === val ? '#4ade80' : 'transparent',
+                    color: showDealsOnly === val ? '#000' : t.textMuted,
+                    transition: 'all 0.15s',
+                  }}>{label}</button>
+                ))}
+              </div>
+
+              {/* Legend */}
+              <div style={{
+                background: theme === 'dark' ? 'rgba(15,15,15,0.92)' : 'rgba(255,255,255,0.95)',
+                backdropFilter: 'blur(12px)',
+                border: `1px solid ${t.border}`,
+                borderRadius: 10, padding: '10px 14px',
+                display: 'flex', flexDirection: 'column', gap: 5,
+                boxShadow: t.shadow,
+              }}>
+                <span style={{ fontSize: 10, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  {showDealsOnly ? 'Good deal density' : 'Listing density'}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <div style={{ width: 60, height: 8, borderRadius: 4, background: 'linear-gradient(90deg, rgba(74,222,128,0.1), rgba(74,222,128,1))' }} />
+                  <span style={{ fontSize: 10, color: t.textSub }}>Low → High</span>
                 </div>
-              ))}
+              </div>
             </div>
           </>
         ) : (

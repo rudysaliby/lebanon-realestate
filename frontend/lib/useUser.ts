@@ -15,16 +15,31 @@ export function useUser() {
     try {
       const { data: profile } = await supabase
         .from('user_profiles')
-        .select('tier, tokens')
+        .select('tier, tokens, full_name')
         .eq('id', authUser.id)
         .single()
+
+      // If no profile exists yet, create it (handles Google OAuth users)
+      if (!profile) {
+        await supabase.from('user_profiles').insert({
+          id: authUser.id,
+          email: authUser.email,
+          full_name:
+            authUser.user_metadata?.full_name ||
+            authUser.user_metadata?.name ||
+            authUser.email?.split('@')[0],
+          tier: authUser.email === 'rudysaliby@hotmail.com' ? 'admin' : 'free',
+          tokens: authUser.email === 'rudysaliby@hotmail.com' ? 999999 : 0,
+        }).single()
+      }
 
       return {
         ...authUser,
         user_metadata: {
           ...authUser.user_metadata,
-          tier:   profile?.tier   ?? authUser.user_metadata?.tier   ?? 'free',
-          tokens: profile?.tokens ?? authUser.user_metadata?.tokens ?? 0,
+          tier:      profile?.tier      ?? (authUser.email === 'rudysaliby@hotmail.com' ? 'admin' : 'free'),
+          tokens:    profile?.tokens    ?? 0,
+          full_name: profile?.full_name ?? authUser.user_metadata?.full_name ?? authUser.user_metadata?.name,
         }
       }
     } catch {
@@ -49,17 +64,19 @@ export function useUser() {
       }
     })
 
-    // Listen for auth changes
+    // Listen for auth state changes — fires immediately on Google OAuth redirect
     const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
         setUser(null)
+        setLoading(false)
         return
       }
-      if (session?.user) {
-        const enriched = await enrichWithProfile(session.user)
-        setUser(enriched)
-      } else {
-        setUser(null)
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        if (session?.user) {
+          const enriched = await enrichWithProfile(session.user)
+          setUser(enriched)
+          setLoading(false)
+        }
       }
     })
 
