@@ -3,75 +3,65 @@ import { useEffect, useState, useRef } from 'react'
 import { useTheme, T } from '@/components/ThemeContext'
 import type { Filters, Mode } from '@/app/page'
 
-function PriceSlider({ min, max, valueMin, valueMax, onChange, t, theme }: {
-  min: number, max: number, valueMin: number, valueMax: number,
+function PriceSlider({ valueMin, valueMax, onChange, t, theme }: {
+  valueMin: number, valueMax: number,
   onChange: (min: number, max: number) => void, t: any, theme: string
 }) {
+  const SLIDER_MIN = 0
+  const SLIDER_MAX = 10000000
+  const STEP = 25000
+
   const fmt = (n: number) => {
-    if (n >= 1000000) return `$${(n/1000000).toFixed(1)}M`
+    if (n >= 1000000) return `$${(n/1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`
     if (n >= 1000)    return `$${Math.round(n/1000)}k`
     return `$${n}`
   }
 
   const handleMin = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = Math.min(Number(e.target.value), valueMax - 10000)
+    const v = Math.min(Number(e.target.value), valueMax - STEP)
     onChange(v, valueMax)
   }
   const handleMax = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = Math.max(Number(e.target.value), valueMin + 10000)
+    const v = Math.max(Number(e.target.value), valueMin + STEP)
     onChange(valueMin, v)
   }
 
-  const pctMin = ((valueMin - min) / (max - min)) * 100
-  const pctMax = ((valueMax - min) / (max - min)) * 100
+  const pctMin = (valueMin / SLIDER_MAX) * 100
+  const pctMax = (valueMax / SLIDER_MAX) * 100
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 220 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 240 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: 11, color: t.textMuted }}>Price</span>
         <span style={{ fontSize: 11, fontWeight: 600, color: t.text }}>
-          {fmt(valueMin)} — {fmt(valueMax)}
+          {fmt(valueMin)} — {valueMax >= SLIDER_MAX ? 'Any' : fmt(valueMax)}
         </span>
       </div>
-      <div style={{ position: 'relative', height: 20, display: 'flex', alignItems: 'center' }}>
-        {/* Track */}
-        <div style={{
-          position: 'absolute', height: 4, left: 0, right: 0,
-          background: t.border, borderRadius: 2,
-        }} />
-        {/* Active track */}
+      <div style={{ position: 'relative', height: 24, display: 'flex', alignItems: 'center' }}>
+        <div style={{ position: 'absolute', height: 4, left: 0, right: 0, background: t.border, borderRadius: 2 }} />
         <div style={{
           position: 'absolute', height: 4, borderRadius: 2,
-          background: t.accent,
-          left: `${pctMin}%`,
-          width: `${pctMax - pctMin}%`,
+          background: t.accent, left: `${pctMin}%`, width: `${pctMax - pctMin}%`,
         }} />
-        {/* Min thumb */}
-        <input type="range" min={min} max={max} step={10000} value={valueMin} onChange={handleMin}
-          style={{
-            position: 'absolute', width: '100%', appearance: 'none', background: 'transparent',
-            pointerEvents: 'auto', zIndex: 1,
-          }}
+        <input type="range" min={SLIDER_MIN} max={SLIDER_MAX} step={STEP} value={valueMin} onChange={handleMin}
+          style={{ position: 'absolute', width: '100%', appearance: 'none', background: 'transparent', zIndex: 2, height: 24 }}
         />
-        {/* Max thumb */}
-        <input type="range" min={min} max={max} step={10000} value={valueMax} onChange={handleMax}
-          style={{
-            position: 'absolute', width: '100%', appearance: 'none', background: 'transparent',
-            pointerEvents: 'auto', zIndex: 1,
-          }}
+        <input type="range" min={SLIDER_MIN} max={SLIDER_MAX} step={STEP} value={valueMax} onChange={handleMax}
+          style={{ position: 'absolute', width: '100%', appearance: 'none', background: 'transparent', zIndex: 2, height: 24 }}
         />
       </div>
       <style>{`
-        input[type=range] { height: 20px; cursor: pointer; }
+        input[type=range] { cursor: pointer; }
         input[type=range]::-webkit-slider-thumb {
-          appearance: none; width: 14px; height: 14px; border-radius: 50%;
+          -webkit-appearance: none; appearance: none;
+          width: 16px; height: 16px; border-radius: 50%;
           background: ${t.accent}; border: 2px solid ${theme === 'dark' ? '#0a0a0a' : '#fff'};
-          box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer; pointer-events: all;
         }
         input[type=range]::-moz-range-thumb {
-          width: 14px; height: 14px; border-radius: 50%;
+          width: 16px; height: 16px; border-radius: 50%;
           background: ${t.accent}; border: 2px solid ${theme === 'dark' ? '#0a0a0a' : '#fff'};
-          cursor: pointer; border: none;
+          cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.3);
         }
       `}</style>
     </div>
@@ -86,34 +76,27 @@ export default function FilterBar({ filters, mode, onChange }: {
   const set = (k: keyof Filters) => (v: string) => onChange({ ...filters, [k]: v })
   const isResidential = mode.type === 'residential'
 
-  const [priceRange, setPriceRange] = useState({ min: 0, max: 5000000, p5: 50000, p95: 2000000 })
+  const SLIDER_MAX = 10000000
   const [sliderMin, setSliderMin] = useState(0)
-  const [sliderMax, setSliderMax] = useState(5000000)
+  const [sliderMax, setSliderMax] = useState(SLIDER_MAX)
   const debounceRef = useRef<any>(null)
 
-  // Fetch realistic price range for current mode
+  // Reset slider when mode changes
   useEffect(() => {
-    fetch(`/api/price-range?period=${mode.period}&type_group=${mode.type}`)
-      .then(r => r.json())
-      .then(data => {
-        setPriceRange(data)
-        setSliderMin(data.p5)
-        setSliderMax(data.p95)
-        onChange({ ...filters, minPrice: '', maxPrice: '' })
-      })
-      .catch(() => {})
+    setSliderMin(0)
+    setSliderMax(SLIDER_MAX)
+    onChange({ ...filters, minPrice: '', maxPrice: '' })
   }, [mode.period, mode.type])
 
   const handleSliderChange = (min: number, max: number) => {
     setSliderMin(min)
     setSliderMax(max)
-    // Debounce filter update
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       onChange({
         ...filters,
-        minPrice: min > priceRange.p5  ? String(min) : '',
-        maxPrice: max < priceRange.p95 ? String(max) : '',
+        minPrice: min > 0           ? String(min) : '',
+        maxPrice: max < SLIDER_MAX  ? String(max) : '',
       })
     }, 400)
   }
@@ -138,7 +121,6 @@ export default function FilterBar({ filters, mode, onChange }: {
     }}>
       {/* Price slider */}
       <PriceSlider
-        min={priceRange.min} max={priceRange.max}
         valueMin={sliderMin} valueMax={sliderMax}
         onChange={handleSliderChange}
         t={t} theme={theme}

@@ -96,9 +96,9 @@ function ModeSelectorContent({ onSelect }: { onSelect: (m: Mode) => void }) {
             </p>
             <div style={{ display: 'flex', gap: 12 }}>
               {[
-                { id: 'residential' as const, label: 'Residential', icon: '🏘️', sub: 'Apartments & Villas' },
-                { id: 'land' as const, label: 'Land', icon: '🌿', sub: 'Plots & Terrain' },
-                { id: 'commercial' as const, label: 'Commercial', icon: '🏢', sub: 'Offices & Shops' },
+                { id: 'residential' as const, label: 'Residential',  icon: '🏘️', sub: 'Apartments & Villas' },
+                { id: 'commercial' as const,  label: 'Commercial',   icon: '🏢', sub: 'Offices, Shops & More' },
+                { id: 'land' as const,        label: 'Land',         icon: '🌿', sub: 'Plots & Terrain' },
               ].map(opt => (
                 <OptionCard key={opt.id} {...opt} onClick={() => chooseType(opt.id)} theme={theme} t={t} />
               ))}

@@ -144,15 +144,19 @@ function AppContent() {
             ))}
             <div style={{ width: 1, height: 14, background: t.border, margin: '0 4px' }} />
             {/* Type toggle */}
-            {(['residential', 'land', 'commercial'] as const).map(tp => (
-              <button key={tp} onClick={() => handleSetMode({ ...mode, type: tp })} style={{
+            {([
+              { id: 'residential' as const, label: 'Residential' },
+              { id: 'commercial'  as const, label: 'Commercial' },
+              { id: 'land'        as const, label: 'Land' },
+            ]).map(({ id, label }) => (
+              <button key={id} onClick={() => handleSetMode({ ...mode, type: id })} style={{
                 padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
                 cursor: 'pointer', border: 'none',
-                background: mode.type === tp ? t.accent : t.bgCard,
-                color: mode.type === tp ? '#000' : t.textMuted,
+                background: mode.type === id ? t.accent : t.bgCard,
+                color: mode.type === id ? '#000' : t.textMuted,
                 transition: 'all 0.15s',
               }}>
-                {tp.charAt(0).toUpperCase() + tp.slice(1)}
+                {label}
               </button>
             ))}
           </div>

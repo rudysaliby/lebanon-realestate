@@ -22,15 +22,17 @@ import httpx
 from .base import BaseScraper, RawListing
 
 CATEGORIES = [
-    # For sale
-    {"url": "https://www.olx.com.lb/properties/apartments-villas-for-sale/",       "period": "sale",    "max_pages": 659},
-    {"url": "https://www.olx.com.lb/properties/land-for-sale/",                    "period": "sale",    "max_pages": 172},
-    {"url": "https://www.olx.com.lb/properties/commercial-for-sale/",              "period": "sale",    "max_pages": 78},
-    {"url": "https://www.olx.com.lb/properties/chalet-for-sale/",                  "period": "sale",    "max_pages": 29},
-    {"url": "https://www.olx.com.lb/properties/buildings-multiple-units-for-sale/","period": "sale",    "max_pages": 17},
-    # For rent
-    {"url": "https://www.olx.com.lb/properties/apartments-villas-for-rent/",       "period": "monthly", "max_pages": 165},
-    {"url": "https://www.olx.com.lb/properties/commercial-for-rent/",              "period": "monthly", "max_pages": 151},
+    # For sale — matches OLX exactly
+    {"url": "https://www.olx.com.lb/properties/apartments-villas-for-sale/",       "period": "sale",    "type": "residential", "max_pages": 659},
+    {"url": "https://www.olx.com.lb/properties/commercial-for-sale/",              "period": "sale",    "type": "commercial",  "max_pages": 78},
+    {"url": "https://www.olx.com.lb/properties/land-for-sale/",                    "period": "sale",    "type": "land",        "max_pages": 172},
+    {"url": "https://www.olx.com.lb/properties/chalet-for-sale/",                  "period": "sale",    "type": "chalet",      "max_pages": 29},
+    {"url": "https://www.olx.com.lb/properties/buildings-multiple-units-for-sale/","period": "sale",    "type": "building",    "max_pages": 17},
+    # For rent — matches OLX exactly
+    {"url": "https://www.olx.com.lb/properties/apartments-villas-for-rent/",       "period": "monthly", "type": "residential", "max_pages": 165},
+    {"url": "https://www.olx.com.lb/properties/commercial-for-rent/",              "period": "monthly", "type": "commercial",  "max_pages": 151},
+    {"url": "https://www.olx.com.lb/properties/land-for-rent/",                    "period": "monthly", "type": "land",        "max_pages": 9},
+    {"url": "https://www.olx.com.lb/properties/chalet-for-rent/",                  "period": "monthly", "type": "chalet",      "max_pages": 13},
 ]
 
 HEADERS = {

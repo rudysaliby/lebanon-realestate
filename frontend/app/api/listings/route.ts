@@ -43,11 +43,15 @@ async function fetchAllListings(filters: any) {
 
     if (filters.type_group && filters.type_group !== 'all') {
       if (filters.type_group === 'residential')
-        query = query.in('property_type', ['apartment', 'villa', 'chalet', 'duplex', 'triplex', 'penthouse'])
+        // Apartments & Villas (OLX residential category)
+        query = query.in('property_type', ['apartment', 'villa', 'duplex', 'triplex', 'penthouse', 'studio'])
       else if (filters.type_group === 'land')
         query = query.eq('property_type', 'land')
       else if (filters.type_group === 'commercial')
-        query = query.in('property_type', ['commercial', 'shop', 'building', 'office', 'warehouse'])
+        // All commercial subtypes from OLX
+        query = query.in('property_type', ['commercial', 'shop', 'building', 'office', 'warehouse', 'restaurant', 'clinic', 'showroom', 'factory', 'gym', 'hotel', 'salon'])
+      else if (filters.type_group === 'chalet')
+        query = query.eq('property_type', 'chalet')
     }
 
     if (filters.minPrice) query = query.gte('price', parseFloat(filters.minPrice))
