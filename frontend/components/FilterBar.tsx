@@ -170,8 +170,8 @@ export default function FilterBar({ filters, mode, onChange }: {
       {/* Reset */}
       <button
         onClick={() => {
-          setSliderMin(priceRange.p5)
-          setSliderMax(priceRange.p95)
+          setSliderMin(0)
+          setSliderMax(10000000)
           onChange({ minPrice: '', maxPrice: '', bedrooms: 'all', furnished: 'all', condition: 'all', region: 'all' })
         }}
         style={{
