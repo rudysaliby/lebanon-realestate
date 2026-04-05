@@ -1,3 +1,4 @@
+import asyncio
 """
 Database save layer.
 
@@ -107,24 +108,40 @@ async def upsert_listings(listings) -> int:
     if skipped_price:    print(f"[DB] Skipped {skipped_price} listings — no price")
     if skipped_location: print(f"[DB] Skipped {skipped_location} listings — no location")
 
-    chunk_size = 500
+    chunk_size = 200  # smaller = less timeout risk
     total = 0
-    async with httpx.AsyncClient(timeout=60) as client:
+    MAX_RETRIES = 3
+    async with httpx.AsyncClient(timeout=90) as client:
         for i in range(0, len(rows), chunk_size):
             chunk = rows[i:i + chunk_size]
             all_keys = set()
             for r in chunk: all_keys.update(r.keys())
             chunk = [{k: r.get(k) for k in all_keys} for r in chunk]
 
-            resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/listings",
-                headers=HEADERS,
-                json=chunk,
-                params={"on_conflict": "url"},
-            )
-            if resp.status_code in (200, 201):
-                total += len(chunk)
-                print(f"\r  [DB] Saved {total}/{len(rows)} rows...", end="", flush=True)
+            for attempt in range(3):
+                try:
+                    resp = await client.post(
+                        f"{SUPABASE_URL}/rest/v1/listings",
+                        headers=HEADERS,
+                        json=chunk,
+                        params={"on_conflict": "url"},
+                    )
+                    if resp.status_code in (200, 201):
+                        total += len(chunk)
+                        print(f"\r  [DB] Saved {total}/{len(rows)} rows...", end="", flush=True)
+                        break
+                    else:
+                        if attempt == 2:
+                            print(f"\n  [DB] Failed chunk after 3 attempts: HTTP {resp.status_code}")
+                        else:
+                            await asyncio.sleep(2)
+                except Exception as e:
+                    if attempt == 2:
+                        print(f"\n  [DB] Error on chunk {i//chunk_size+1}: {e} — skipping")
+                    else:
+                        await asyncio.sleep(3)
+                        continue
+                    break
             else:
                 print(f"\n  [DB] Error {resp.status_code}: {resp.text[:200]}", flush=True)
 

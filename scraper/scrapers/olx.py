@@ -259,15 +259,20 @@ class OLXScraper(BaseScraper):
                             try: description = desc_m.group(1).encode().decode('unicode_escape')[:500]
                             except: description = desc_m.group(1)[:500]
 
-                        # OLX stores photos as {"photos":[{"id":12345,...}]}
-                        # Images at https://images.olx.com.lb/thumbnails/{id}-800x600.webp
-                        photo_m = re.search(r'"photos"\s*:\s*\[\s*\{[^}]*"id"\s*:\s*(\d+)', html)
-                        if photo_m:
-                            img_url = f"https://images.olx.com.lb/thumbnails/{photo_m.group(1)}-800x600.webp"
+                        # Primary: JSON-LD structured data has reliable image URL
+                        # <script type="application/ld+json">{"image": "https://images.olx.com.lb/..."}
+                        ld_m = re.search(r'"image"\s*:\s*"(https://images\.olx\.com\.lb/thumbnails/[^"]+)"', html)
+                        if ld_m:
+                            # Use 800x600 version for better quality
+                            img_url = re.sub(r'-\d+x\d+\.', '-800x600.', ld_m.group(1))
                         else:
-                            # Fallback: try direct thumbnail URL in HTML
-                            thumb_m = re.search(r'https://images\.olx\.com\.lb/thumbnails/(\d+)-\d+x\d+\.\w+', html)
-                            img_url = thumb_m.group(0) if thumb_m else None
+                            # Fallback: photos JSON blob
+                            photo_m = re.search(r'"photos"\s*:\s*\[\s*\{[^}]*"id"\s*:\s*(\d+)', html)
+                            if photo_m:
+                                img_url = f"https://images.olx.com.lb/thumbnails/{photo_m.group(1)}-800x600.webp"
+                            else:
+                                thumb_m = re.search(r'https://images\.olx\.com\.lb/thumbnails/\d+-\d+x\d+\.\w+', html)
+                                img_url = thumb_m.group(0) if thumb_m else None
 
                         views     = parse_view(title, description or "")
                         lifestyle = parse_lifestyle(title)
