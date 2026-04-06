@@ -122,34 +122,14 @@ function ListingCard({ raw, medianPpsqm, t, theme }: any) {
         <div style={{ fontSize:11, color:t.textMuted, marginTop:'auto' }}>
           📍 {listing.area}{listing.region ? `, ${listing.region}` : ''}
         </div>
-        {!user ? (
-          <button onClick={onSignIn} style={{
-            display:'flex', alignItems:'center', justifyContent:'center', gap:5, width:'100%',
-            background:'rgba(107,114,128,0.1)', border:`1px solid ${t.border}`,
-            borderRadius:7, padding:'7px', fontSize:12, color:t.textMuted,
-            cursor:'pointer', marginTop:4, fontWeight:600,
-          }}>
-            Sign in to view listing
-          </button>
-        ) : (tier === 'free') ? (
-          <button onClick={() => setShowPricing(true)} style={{
-            display:'flex', alignItems:'center', justifyContent:'center', gap:5, width:'100%',
-            background:'rgba(74,222,128,0.08)', border:`1px solid rgba(74,222,128,0.2)`,
-            borderRadius:7, padding:'7px', fontSize:12, color:t.accent,
-            cursor:'pointer', marginTop:4, fontWeight:600,
-          }}>
-            Upgrade to view listing
-          </button>
-        ) : (
-          <a href={listing.url} target="_blank" rel="noopener noreferrer" style={{
-            display:'flex', alignItems:'center', justifyContent:'center', gap:5,
-            background:t.accentBg, border:`1px solid ${t.accentBorder}`,
-            borderRadius:7, padding:'7px', fontSize:12, color:t.accent,
-            textDecoration:'none', fontWeight:600, marginTop:4,
-          }}>
-            View Listing <ExternalLink size={11}/>
-          </a>
-        )}
+        <a href={listing.url} target="_blank" rel="noopener noreferrer" style={{
+          display:'flex', alignItems:'center', justifyContent:'center', gap:5,
+          background:t.accentBg, border:`1px solid ${t.accentBorder}`,
+          borderRadius:7, padding:'7px', fontSize:12, color:t.accent,
+          textDecoration:'none', fontWeight:600, marginTop:4,
+        }}>
+          View Listing <ExternalLink size={11}/>
+        </a>
       </div>
     </div>
   )
