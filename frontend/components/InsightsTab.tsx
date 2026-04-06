@@ -4,6 +4,7 @@ import { TrendingDown, TrendingUp, Crown, ChevronRight, ChevronLeft, Coins } fro
 import { useTheme, T } from '@/components/ThemeContext'
 import { canViewInsights, canViewDealFinder, canExportCSV, getTier } from '@/lib/useTier'
 import PricingPage from '@/components/PricingPage'
+import AnalystFeatures from '@/components/AnalystFeatures'
 import type { Mode } from '@/app/page'
 
 function median(arr: number[]) {
@@ -250,7 +251,7 @@ export default function InsightsTab({ mode, user, onSignIn }: {
   const t = T[theme]
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeView, setActiveView] = useState<'market' | 'deals'>('market')
+  const [activeView, setActiveView] = useState<'market' | 'deals' | 'features'>('market')
   const [showPricing, setShowPricing] = useState(false)
   const maxPpsqmRef = useRef<number>(1)
 
@@ -365,6 +366,16 @@ export default function InsightsTab({ mode, user, onSignIn }: {
         </div>
       </div>
       {showPricing && <PricingPage onClose={() => setShowPricing(false)} currentTier={tier} user={user} onUpgrade={handleUpgrade} />}
+      {activeView === 'features' && !loading && (
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', background: t.bg, padding: '24px' }}>
+          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:20, fontWeight:700, color:t.text, marginBottom:6 }}>Tools & Exports</h2>
+          <p style={{ fontSize:12, color:t.textMuted, marginBottom:20 }}>Use tokens to export data, generate reports, and set market alerts.</p>
+          <AnalystFeatures user={user} onUpgrade={(action) => {
+            if (!user) { onSignIn(); return }
+            setShowPricing(true)
+          }} />
+        </div>
+      )}
     </>
   )
 
@@ -400,8 +411,9 @@ export default function InsightsTab({ mode, user, onSignIn }: {
           {/* View toggle */}
           <div style={{ display:'flex', gap:8, marginBottom:24 }}>
             {[
-              { id:'market' as const, label:'Market Overview', icon:'📊' },
-              { id:'deals'  as const, label:'Deal Finder',     icon:'🎯' },
+              { id:'market'   as const, label:'Market Overview', icon:'📊' },
+              { id:'deals'    as const, label:'Deal Finder',     icon:'🎯' },
+              { id:'features' as const, label:'Tools & Exports', icon:'⚡' },
             ].map(v => (
               <button key={v.id} onClick={() => setActiveView(v.id)} style={{
                 padding:'7px 16px', borderRadius:8, fontSize:13, fontWeight:600,
@@ -488,6 +500,16 @@ export default function InsightsTab({ mode, user, onSignIn }: {
       </div>
 
       {showPricing && <PricingPage onClose={() => setShowPricing(false)} currentTier={tier} user={user} onUpgrade={handleUpgrade} />}
+      {activeView === 'features' && !loading && (
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', background: t.bg, padding: '24px' }}>
+          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:20, fontWeight:700, color:t.text, marginBottom:6 }}>Tools & Exports</h2>
+          <p style={{ fontSize:12, color:t.textMuted, marginBottom:20 }}>Use tokens to export data, generate reports, and set market alerts.</p>
+          <AnalystFeatures user={user} onUpgrade={(action) => {
+            if (!user) { onSignIn(); return }
+            setShowPricing(true)
+          }} />
+        </div>
+      )}
     </>
   )
 }

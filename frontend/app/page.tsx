@@ -53,15 +53,9 @@ function AppContent() {
   const [showAuth, setShowAuth] = useState(false)
   const [hydrated, setHydrated] = useState(false)
 
-  // Restore mode from localStorage on mount
+  // Always start fresh on page load — go to ModeSelector
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(MODE_KEY)
-      if (saved) {
-        const parsed = JSON.parse(saved) as Mode
-        if (parsed.period && parsed.type) setMode(parsed)
-      }
-    } catch {}
+    // Don't restore mode from localStorage — always show ModeSelector on refresh
     setHydrated(true)
   }, [])
 
@@ -164,18 +158,20 @@ function AppContent() {
 
           <div style={{ width: 1, height: 18, background: t.border }} />
 
-          {(['map', 'insights'] as const).map(tb => (
-            <button key={tb} onClick={() => setTab(tb)} style={{
+          {([
+            { id: 'map'      as const, label: 'Map',      icon: <Map size={12}/> },
+            { id: 'insights' as const, label: 'Insights', icon: <BarChart2 size={12}/> },
+          ]).map(({ id, label, icon }) => (
+            <button key={id} onClick={() => setTab(id)} style={{
               display: 'flex', alignItems: 'center', gap: 5,
               padding: '4px 12px', borderRadius: 6, fontSize: 12,
-              cursor: 'pointer', fontWeight: tab === tb ? 600 : 400,
-              background: tab === tb ? t.accentBg : 'transparent',
-              border: `1px solid ${tab === tb ? t.accentBorder : 'transparent'}`,
-              color: tab === tb ? t.accent : t.textMuted,
+              cursor: 'pointer', fontWeight: tab === id ? 600 : 400,
+              background: tab === id ? t.accentBg : 'transparent',
+              border: `1px solid ${tab === id ? t.accentBorder : 'transparent'}`,
+              color: tab === id ? t.accent : t.textMuted,
               transition: 'all 0.15s',
             }}>
-              {tb === 'map' ? <Map size={12} /> : <BarChart2 size={12} />}
-              {tb.charAt(0).toUpperCase() + tb.slice(1)}
+              {icon} {label}
             </button>
           ))}
         </div>
@@ -187,6 +183,19 @@ function AppContent() {
               : <><strong style={{ color: t.textSub }}>{count.toLocaleString()}</strong> listings</>
             }
           </span>
+
+          {/* Token display */}
+          {user && (user.user_metadata?.tier === 'explorer' || user.user_metadata?.tier === 'analyst' || user.user_metadata?.tier === 'admin') && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)',
+              borderRadius: 20, padding: '3px 10px', fontSize: 11,
+            }}>
+              <span style={{ color: '#4ade80' }}>⚡</span>
+              <span style={{ fontWeight: 700, color: '#4ade80' }}>{user.user_metadata?.tokens ?? 0}</span>
+              <span style={{ color: 'rgba(74,222,128,0.6)' }}>tokens</span>
+            </div>
+          )}
 
           <ThemeToggle />
 

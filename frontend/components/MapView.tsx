@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useTheme } from '@/components/ThemeContext'
@@ -7,7 +7,6 @@ import type { Mode } from '@/app/page'
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
-// External store — bypasses Mapbox property serialization
 const areaDataStore: Record<string, any> = {}
 
 function processGeoJSON(geojson: any, showDealsOnly: boolean) {
@@ -19,15 +18,9 @@ function processGeoJSON(geojson: any, showDealsOnly: boolean) {
     const key = p.area || p.region || 'Unknown'
     if (!areas[key]) {
       areas[key] = {
-        lat: f.geometry.coordinates[1],
-        lng: f.geometry.coordinates[0],
-        area: p.area || key,
-        region: p.region || '',
-        subregion: p.subregion || '',
-        count: 0,
-        ppsqms: [],
-        prices: [],
-        listings: [],
+        lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0],
+        area: p.area || key, region: p.region || '', subregion: p.subregion || '',
+        count: 0, ppsqms: [], prices: [], listings: [],
       }
     }
     const a = areas[key]
@@ -44,7 +37,6 @@ function processGeoJSON(geojson: any, showDealsOnly: boolean) {
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
   }
 
-  // Compute global percentiles for valuation
   const allPpsqms = Object.values(areas).flatMap((a: any) => a.ppsqms).sort((a: any, b: any) => a - b)
   const p25 = allPpsqms[Math.floor(allPpsqms.length * 0.25)] || 0
   const p75 = allPpsqms[Math.floor(allPpsqms.length * 0.75)] || 1
@@ -54,59 +46,43 @@ function processGeoJSON(geojson: any, showDealsOnly: boolean) {
   Object.values(areas).forEach((a: any) => {
     const medPpsqm = med(a.ppsqms)
     const medPrice = med(a.prices)
-    // valuation_score: 0=cheap(good deal), 1=expensive
     const score = medPpsqm && p75 > p25
-      ? Math.min(1, Math.max(0, (medPpsqm - p25) / (p75 - p25)))
-      : 0.5
+      ? Math.min(1, Math.max(0, (medPpsqm - p25) / (p75 - p25))) : 0.5
 
-    const dealScore = 1 - score // 1=great deal, 0=expensive
-
-    // Count "good deal" listings (below area median ppsqm)
-    const goodDealCount = a.ppsqms.filter((p: number) => medPpsqm && p < medPpsqm * 0.9).length
-
-    // Sort listings: best deal first (lowest ppsqm)
     const sortedListings = [...a.listings].sort((x: any, y: any) => {
       const xs = x.price && x.size_sqm ? Number(x.price) / Number(x.size_sqm) : 999999
       const ys = y.price && y.size_sqm ? Number(y.price) / Number(y.size_sqm) : 999999
       return xs - ys
     })
 
-    // In "deals only" mode, filter to only good deal listings
-    const filteredListings = showDealsOnly
-      ? sortedListings.filter((l: any) => {
-          if (!l.price || !l.size_sqm || !medPpsqm) return false
-          return (Number(l.price) / Number(l.size_sqm)) < medPpsqm * 0.95
-        })
-      : sortedListings
+    const goodDealListings = sortedListings.filter((l: any) => {
+      if (!l.price || !l.size_sqm || !medPpsqm) return false
+      return (Number(l.price) / Number(l.size_sqm)) < medPpsqm * 0.95
+    })
 
-    // Skip areas with no matching listings in deals mode
+    const filteredListings = showDealsOnly ? goodDealListings : sortedListings
     if (showDealsOnly && filteredListings.length === 0) return
 
     const areaData = {
-      area: a.area,
-      region: a.region,
-      subregion: a.subregion,
+      area: a.area, region: a.region, subregion: a.subregion,
       count: filteredListings.length,
       total_count: a.count,
       median_price: medPrice ? Math.round(medPrice) : null,
       median_ppsqm: medPpsqm ? Math.round(medPpsqm) : null,
-      good_deal_count: goodDealCount,
-      deal_score: dealScore,
+      good_deal_count: goodDealListings.length,
       listings: filteredListings.slice(0, 60),
       show_deals_only: showDealsOnly,
     }
 
-    // Store in external map (bypasses Mapbox serialization)
     areaDataStore[a.area] = areaData
 
     features.push({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [a.lng, a.lat] },
       properties: {
-        area: a.area,
-        count: showDealsOnly ? goodDealCount : a.count,
-        deal_score: dealScore,
-        good_deal_count: goodDealCount,
+        area: a.area, region: a.region,
+        count: showDealsOnly ? goodDealListings.length : a.count,
+        lat: a.lat, lng: a.lng,
       }
     })
   })
@@ -115,10 +91,7 @@ function processGeoJSON(geojson: any, showDealsOnly: boolean) {
 }
 
 export default function MapView({ geojson, mode, onAreaClick, showDealsOnly }: {
-  geojson: any
-  mode: Mode
-  onAreaClick: (d: any) => void
-  showDealsOnly: boolean
+  geojson: any, mode: Mode, onAreaClick: (d: any) => void, showDealsOnly: boolean
 }) {
   const { theme } = useTheme()
   const mapContainer = useRef<HTMLDivElement>(null)
@@ -127,61 +100,63 @@ export default function MapView({ geojson, mode, onAreaClick, showDealsOnly }: {
   const currentTheme = useRef(theme)
   const onAreaClickRef = useRef(onAreaClick)
   onAreaClickRef.current = onAreaClick
+  const showDealsRef = useRef(showDealsOnly)
+  showDealsRef.current = showDealsOnly
 
-  const addLayers = (m: mapboxgl.Map, thm: string) => {
+  const addLayers = (m: mapboxgl.Map, thm: string, dealsOnly: boolean) => {
     if (!m.getSource('areas')) {
-      m.addSource('areas', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] } as any,
-      })
+      m.addSource('areas', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } as any })
     }
-    for (const l of ['area-heat', 'area-click', 'area-labels']) {
+    for (const l of ['area-heat', 'area-circles', 'area-click', 'area-labels']) {
       if (m.getLayer(l)) m.removeLayer(l)
     }
 
-    // Heatmap — green = good deals, intensity based on count of good deals
-    m.addLayer({
-      id: 'area-heat',
-      type: 'heatmap',
-      source: 'areas',
-      paint: {
-        // Weight by count of good deals
-        'heatmap-weight': [
-          'interpolate', ['linear'], ['get', 'count'],
-          0, 0, 5, 0.4, 20, 0.7, 100, 1
-        ],
-        'heatmap-intensity': [
-          'interpolate', ['linear'], ['zoom'],
-          6, 0.5, 10, 1.5, 13, 2
-        ],
-        // Always green — brighter = more good deals
-        'heatmap-color': [
-          'interpolate', ['linear'], ['heatmap-density'],
-          0,    'rgba(0,0,0,0)',
-          0.05, 'rgba(74,222,128,0.05)',
-          0.2,  'rgba(74,222,128,0.25)',
-          0.5,  'rgba(74,222,128,0.55)',
-          0.8,  'rgba(74,222,128,0.8)',
-          1.0,  'rgba(74,222,128,0.95)',
-        ],
-        'heatmap-radius': [
-          'interpolate', ['linear'], ['get', 'count'],
-          1, 25, 10, 45, 50, 65, 200, 90
-        ],
-        'heatmap-opacity': 0.8,
-      },
-    })
+    if (dealsOnly) {
+      // Good Deals mode — green heatmap
+      m.addLayer({
+        id: 'area-heat',
+        type: 'heatmap',
+        source: 'areas',
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'count'], 0, 0, 5, 0.4, 20, 0.7, 100, 1],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 10, 1.5, 13, 2],
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.05, 'rgba(74,222,128,0.05)',
+            0.2, 'rgba(74,222,128,0.3)',
+            0.5, 'rgba(74,222,128,0.6)',
+            0.8, 'rgba(74,222,128,0.85)',
+            1.0, 'rgba(74,222,128,1)',
+          ],
+          'heatmap-radius': ['interpolate', ['linear'], ['get', 'count'], 1, 25, 10, 45, 50, 65, 200, 90],
+          'heatmap-opacity': 0.8,
+        },
+      })
+    } else {
+      // All listings mode — green circles, uniform size
+      m.addLayer({
+        id: 'area-circles',
+        type: 'circle',
+        source: 'areas',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 12, 10, 18, 13, 24],
+          'circle-color': '#4ade80',
+          'circle-opacity': 0.25,
+          'circle-stroke-color': '#4ade80',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-opacity': 0.6,
+        },
+      })
+    }
 
-    // Invisible clickable layer
+    // Invisible clickable layer (always present)
     m.addLayer({
       id: 'area-click',
       type: 'circle',
       source: 'areas',
       paint: {
-        'circle-radius': [
-          'interpolate', ['linear'], ['get', 'count'],
-          1, 14, 10, 20, 50, 28, 200, 36
-        ],
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 16, 10, 22, 13, 30],
         'circle-color': 'transparent',
         'circle-opacity': 0,
       },
@@ -199,13 +174,13 @@ export default function MapView({ geojson, mode, onAreaClick, showDealsOnly }: {
         'text-allow-overlap': false,
       },
       paint: {
-        'text-color': thm === 'dark' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)',
+        'text-color': thm === 'dark' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)',
         'text-halo-color': thm === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)',
         'text-halo-width': 1.5,
       },
     })
 
-    // Events
+    // Hover popup
     m.on('mouseenter', 'area-click', (e) => {
       m.getCanvas().style.cursor = 'pointer'
       const p = e.features![0].properties!
@@ -218,15 +193,13 @@ export default function MapView({ geojson, mode, onAreaClick, showDealsOnly }: {
 
       popup.current!
         .setLngLat((e.features![0].geometry as any).coordinates)
-        .setHTML(`
-          <div style="font-family:DM Sans,sans-serif;padding:12px 16px;background:${bg};border-radius:10px;min-width:160px;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
-            <div style="font-weight:700;font-size:13px;color:${tc};margin-bottom:2px">${data.area}</div>
-            <div style="font-size:11px;color:${sub};margin-bottom:8px">${data.region}</div>
-            ${data.median_price ? `<div style="font-size:13px;color:#4ade80;font-weight:700">$${Number(data.median_price).toLocaleString()}</div>` : ''}
-            ${data.median_ppsqm ? `<div style="font-size:11px;color:${sub}">$${Number(data.median_ppsqm).toLocaleString()}/m²</div>` : ''}
-            <div style="font-size:10px;color:${sub};margin-top:6px">${data.count} listings · click to explore</div>
-          </div>
-        `)
+        .setHTML(`<div style="font-family:DM Sans,sans-serif;padding:12px 16px;background:${bg};border-radius:10px;min-width:160px;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+          <div style="font-weight:700;font-size:13px;color:${tc};margin-bottom:2px">${data.area}</div>
+          <div style="font-size:11px;color:${sub};margin-bottom:8px">${data.region}</div>
+          ${data.median_price ? `<div style="font-size:13px;color:#4ade80;font-weight:700">$${Number(data.median_price).toLocaleString()}</div>` : ''}
+          ${data.median_ppsqm ? `<div style="font-size:11px;color:${sub}">$${Number(data.median_ppsqm).toLocaleString()}/m²</div>` : ''}
+          <div style="font-size:10px;color:${sub};margin-top:6px">${data.count} listings · click to explore</div>
+        </div>`)
         .addTo(m)
     })
 
@@ -235,11 +208,29 @@ export default function MapView({ geojson, mode, onAreaClick, showDealsOnly }: {
       popup.current!.remove()
     })
 
+    // Click — zoom in first if zoomed out, then open panel
     m.on('click', 'area-click', (e) => {
       const p = e.features![0].properties!
       const data = areaDataStore[p.area]
-      if (data) {
-        popup.current!.remove()
+      if (!data) return
+
+      popup.current!.remove()
+
+      const currentZoom = m.getZoom()
+
+      // If zoomed out (< 11), zoom into the area first
+      if (currentZoom < 11) {
+        m.flyTo({
+          center: [Number(p.lng || data.listings?.[0]?.lng || e.lngLat.lng), 
+                   Number(p.lat || data.listings?.[0]?.lat || e.lngLat.lat)],
+          zoom: 12,
+          duration: 800,
+        })
+        // Open panel after zoom completes
+        setTimeout(() => {
+          onAreaClickRef.current(data)
+        }, 850)
+      } else {
         onAreaClickRef.current(data)
       }
     })
@@ -250,46 +241,40 @@ export default function MapView({ geojson, mode, onAreaClick, showDealsOnly }: {
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
-      style: theme === 'dark'
-        ? 'mapbox://styles/mapbox/dark-v11'
-        : 'mapbox://styles/mapbox/light-v11',
+      style: theme === 'dark' ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11',
       center: [35.5018, 33.8938],
       zoom: 8.5,
     })
 
     map.current.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right')
     popup.current = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 8 })
-
-    map.current.on('load', () => addLayers(map.current!, theme))
+    map.current.on('load', () => addLayers(map.current!, theme, showDealsOnly))
   }, [])
 
-  // Theme switch
+  // Theme change
   useEffect(() => {
     currentTheme.current = theme
     if (!map.current) return
-    const style = theme === 'dark'
-      ? 'mapbox://styles/mapbox/dark-v11'
-      : 'mapbox://styles/mapbox/light-v11'
-    map.current.setStyle(style)
+    map.current.setStyle(theme === 'dark' ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11')
     map.current.once('styledata', () => {
-      addLayers(map.current!, theme)
-      if (geojson) {
-        const src = map.current!.getSource('areas') as mapboxgl.GeoJSONSource
-        if (src) src.setData(processGeoJSON(geojson, showDealsOnly) as any)
-      }
+      addLayers(map.current!, theme, showDealsRef.current)
+      const src = map.current!.getSource('areas') as mapboxgl.GeoJSONSource
+      if (src && geojson) src.setData(processGeoJSON(geojson, showDealsRef.current) as any)
     })
   }, [theme])
 
-  // Data / mode update
+  // Data / showDealsOnly update
   useEffect(() => {
     if (!map.current || !geojson) return
     const data = processGeoJSON(geojson, showDealsOnly)
-    const update = () => {
+    const apply = () => {
+      // Rebuild layers when mode changes (heatmap ↔ circles)
+      addLayers(map.current!, currentTheme.current, showDealsOnly)
       const src = map.current!.getSource('areas') as mapboxgl.GeoJSONSource
       if (src) src.setData(data as any)
     }
-    if (map.current.loaded()) update()
-    else map.current.once('load', update)
+    if (map.current.loaded()) apply()
+    else map.current.once('load', apply)
   }, [geojson, showDealsOnly])
 
   return (

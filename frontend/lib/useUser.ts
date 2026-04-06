@@ -13,15 +13,15 @@ export function useUser() {
   const enrichWithProfile = async (authUser: any) => {
     if (!authUser) return null
     try {
-      const { data: profile } = await supabase
+      const { data: profile, error } = await supabase
         .from('user_profiles')
         .select('tier, tokens, full_name')
         .eq('id', authUser.id)
         .single()
 
-      // If no profile exists yet, create it (handles Google OAuth users)
+      // Auto-create profile for Google OAuth users who slipped through
       if (!profile) {
-        await supabase.from('user_profiles').insert({
+        const newProfile = {
           id: authUser.id,
           email: authUser.email,
           full_name:
@@ -30,14 +30,25 @@ export function useUser() {
             authUser.email?.split('@')[0],
           tier: authUser.email === 'rudysaliby@hotmail.com' ? 'admin' : 'free',
           tokens: authUser.email === 'rudysaliby@hotmail.com' ? 999999 : 0,
-        }).single()
+        }
+        await supabase.from('user_profiles').upsert(newProfile, { onConflict: 'id' })
+
+        return {
+          ...authUser,
+          user_metadata: {
+            ...authUser.user_metadata,
+            tier: newProfile.tier,
+            tokens: newProfile.tokens,
+            full_name: newProfile.full_name,
+          }
+        }
       }
 
       return {
         ...authUser,
         user_metadata: {
           ...authUser.user_metadata,
-          tier:      profile?.tier      ?? (authUser.email === 'rudysaliby@hotmail.com' ? 'admin' : 'free'),
+          tier:      profile?.tier      ?? 'free',
           tokens:    profile?.tokens    ?? 0,
           full_name: profile?.full_name ?? authUser.user_metadata?.full_name ?? authUser.user_metadata?.name,
         }
@@ -48,7 +59,6 @@ export function useUser() {
   }
 
   useEffect(() => {
-    // Initial session check
     supabase.auth.getSession().then(async ({ data }) => {
       if (data.session?.user) {
         const enriched = await enrichWithProfile(data.session.user)
@@ -58,13 +68,11 @@ export function useUser() {
       }
       setLoading(false)
 
-      // Clean OAuth hash from URL
       if (typeof window !== 'undefined' && window.location.hash.includes('access_token')) {
         window.history.replaceState(null, '', window.location.pathname)
       }
     })
 
-    // Listen for auth state changes — fires immediately on Google OAuth redirect
     const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
         setUser(null)

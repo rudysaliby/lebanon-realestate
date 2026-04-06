@@ -119,6 +119,15 @@ export default function PricingPage({ onClose, currentTier, user, onUpgrade }: {
       zIndex: 200, overflowY: 'auto', padding: '24px 16px',
       fontFamily: "'DM Sans', sans-serif",
     }} onClick={e => e.target === e.currentTarget && onClose()}>
+      {/* Floating close button always visible */}
+      <button onClick={onClose} style={{
+        position: 'fixed', top: 16, right: 20,
+        background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.2)',
+        borderRadius: '50%', width: 36, height: 36,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer', color: '#fff', zIndex: 201,
+        backdropFilter: 'blur(8px)',
+      }}><X size={16}/></button>
       <div style={{
         width: '100%', maxWidth: 900,
         background: theme === 'dark' ? '#0f0f0f' : '#fff',
