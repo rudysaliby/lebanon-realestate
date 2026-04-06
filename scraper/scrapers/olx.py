@@ -68,7 +68,12 @@ def parse_location(html):
     names = re.findall(r'"name"\s*:\s*"([^"]+)"', m.group(1))
     if not names or names[0] != "Lebanon":
         return False, None, None
-    return True, (names[1] if len(names) >= 2 else None), (names[2] if len(names) >= 3 else None)
+    region = names[1] if len(names) >= 2 else None
+    area   = names[2] if len(names) >= 3 else None
+    # OLX uses "Other in X" when seller picks no specific area — strip it
+    if area and re.match(r'(?i)^other(s)? in ', area):
+        area = None  # fall back to region-level, enrich_all will try to find area from title
+    return True, region, area
 
 def parse_price(raw):
     if not raw: return None

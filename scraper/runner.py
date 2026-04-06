@@ -163,27 +163,28 @@ async def run():
 
     # ── STEP 2: DB ────────────────────────────────────────────────────────────
     print(f"\n── STEP 2/4  Saving to database")
-    sys.stdout.write(f"  ⟳ Saving {len(olx_result)} listings...")
-    sys.stdout.flush()
+    print(f"  ⟳ Saving {len(olx_result)} listings to Supabase...")
+    db_start = time.time()
     saved = await upsert_listings(olx_result)
-    sys.stdout.write(f"\r  ✓ Saved {saved} listings{' '*30}\n")
-    sys.stdout.flush()
+    print(f"\r  ✓ Saved {saved}/{len(olx_result)} listings in {_fmt(time.time()-db_start)}{' '*20}")
 
     # ── STEP 3: Enrichment ────────────────────────────────────────────────────
     without = len(olx_result) - with_coords
     suspect = sum(1 for l in olx_result if l._price_suspect)
-    print(f"\n── STEP 3/4  Enrichment ({without} need location | {suspect} need price check)")
-    sys.stdout.write(f"  ⟳ Running enrichment...")
-    sys.stdout.flush()
+    print(f"\n── STEP 3/4  Enrichment")
+    print(f"  → {suspect} listings need price verification")
+    print(f"  → {without} listings need location enrichment")
+    print(f"  → All listings need tag extraction")
+    print()
+    enrich_start = time.time()
     await run_enrichment()
-    sys.stdout.write(f"\r  ✓ Enrichment complete{' '*40}\n")
-    sys.stdout.flush()
+    print(f"\n  ✓ Enrichment complete in {_fmt(time.time()-enrich_start)}")
 
     # ── STEP 4: Cleanup ───────────────────────────────────────────────────────
     print(f"\n── STEP 4/4  Cleanup")
     sys.stdout.write(f"  ⟳ Removing listings with no location...")
     sys.stdout.flush()
-    await cleanup_dead_listings()
+    removed = await cleanup_dead_listings()
     sys.stdout.write(f"\r  ✓ Cleanup done{' '*40}\n")
     sys.stdout.flush()
 

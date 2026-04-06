@@ -1,3 +1,4 @@
+import sys
 """
 Enrichment pipeline — runs after scraping.
 
@@ -183,6 +184,7 @@ async def run_enrichment():
         print(f"\n[Price] {len(suspect)} listings need price verification")
 
         if suspect:
+            print(f"  [Price] Verifying {len(suspect)} listings...", flush=True)
             PRICE_SYSTEM = """You are a Lebanese real estate expert. Determine if the price field is:
 1. TOTAL property price (normal)
 2. Price PER SQM (seller entered wrong field)
@@ -244,8 +246,17 @@ Guidelines:
                         # Mark as verified anyway to avoid loop
                         await update_listing(listing["id"], {"price_verified": True}, client)
 
-            await asyncio.gather(*[verify_price(l) for l in suspect])
-            print(f"[Price] Verification complete")
+            price_done = 0
+            price_lock = asyncio.Lock()
+            async def verify_price_tracked(l):
+                nonlocal price_done
+                await verify_price(l)
+                async with price_lock:
+                    price_done += 1
+                    sys.stdout.write(f"\r  [Price] {price_done}/{len(suspect)} verified", )
+                    sys.stdout.flush()
+            await asyncio.gather(*[verify_price_tracked(l) for l in suspect])
+            print(f"\r  [Price] {len(suspect)}/{len(suspect)} verified ✓{' '*20}")
 
         # ── PHASE 1: Location enrichment ──────────────────────────────────────
         unverified = await get_pending(client, "ai_verified")
@@ -285,8 +296,10 @@ Guidelines:
         for i in range(0, len(regex_queue), 20):
             batch = regex_queue[i:i+20]
             await asyncio.gather(*[save_regex(l, r) for l, r in batch])
-
-        print(f"[Location] Regex done: {loc_updated} saved instantly")
+            done = min(i+20, len(regex_queue))
+            sys.stdout.write(f"\r  [Location/Regex] {done}/{len(regex_queue)} saved...")
+            sys.stdout.flush()
+        print(f"\r  [Location/Regex] {loc_updated} saved instantly ✓{' '*20}")
 
         # Claude batches
         BATCH_SIZE  = 5
@@ -356,16 +369,19 @@ Guidelines:
                     loc_skipped += 1
 
         batches = [claude_queue[i:i+BATCH_SIZE] for i in range(0, len(claude_queue), BATCH_SIZE)]
-        print(f"[Location] Processing {len(claude_queue)} via Claude in {len(batches)} batches...")
+        print(f"  [Location/Claude] {len(claude_queue)} listings in {len(batches)} batches...", flush=True)
 
         for i, batch in enumerate(batches):
             await process_batch(batch)
+            done = min((i+1)*BATCH_SIZE, len(claude_queue))
+            pct  = round(done / max(len(claude_queue),1) * 100)
+            sys.stdout.write(f"\r  [Location/Claude] {done}/{len(claude_queue)} ({pct}%) enriched={loc_updated} skipped={loc_skipped}")
+            sys.stdout.flush()
             if (i+1) % 20 == 0:
                 save_cache(cache)
-                print(f"  [Progress] {(i+1)*BATCH_SIZE}/{len(claude_queue)} | enriched={loc_updated} skipped={loc_skipped}")
 
         save_cache(cache)
-        print(f"[Location] Complete — {loc_updated} enriched, {loc_skipped} skipped")
+        print(f"\r  [Location] Complete — {loc_updated} enriched, {loc_skipped} skipped{' '*20}")
         print(f"[Cache] Now contains {len(cache)} areas")
 
         # ── PHASE 2: Tag enrichment ───────────────────────────────────────────
@@ -409,9 +425,10 @@ Guidelines:
             batch = untagged[i:i+200]
             await asyncio.gather(*[enrich_tags(l) for l in batch])
             done = min(i+200, len(untagged))
-            pct  = round(done / len(untagged) * 100)
-            print(f"\r  [Tags] {done}/{len(untagged)} ({pct}%)  extracted={tag_updated}", end="", flush=True)
-        print()  # newline after r loop
+            pct  = round(done / max(len(untagged),1) * 100)
+            sys.stdout.write(f"\r  [Tags] {done}/{len(untagged)} ({pct}%)  extracted={tag_updated}  ")
+            sys.stdout.flush()
+        print(f"\r  [Tags] {len(untagged)}/{len(untagged)} (100%)  extracted={tag_updated} ✓{' '*20}")
 
         await ai_client.aclose()
         print(f"[Tags] Complete — {tag_updated}/{len(untagged)} extracted")

@@ -79,16 +79,38 @@ class BaseScraper:
     def guess_property_type(self, title: str | None, type_name: str | None = None) -> str | None:
         if type_name:
             t = type_name.lower()
-            if any(w in t for w in ["apartment","flat","loft","studio"]): return "apartment"
-            if any(w in t for w in ["villa","house","townhouse","chalet","duplex","triplex"]): return "villa"
-            if any(w in t for w in ["land","plot","terrain"]): return "land"
-            if any(w in t for w in ["commercial","office","shop","store","warehouse","restaurant","clinic","showroom","factory","gym","hotel","salon"]): return "commercial"
-            if any(w in t for w in ["chalet","cabin"]): return "chalet"
-            if any(w in t for w in ["building","multiple unit"]): return "building"
+            if any(w in t for w in ["apartment","flat","loft","studio","penthouse"]): return "apartment"
+            if any(w in t for w in ["villa","house","townhouse","duplex","triplex","detached"]): return "villa"
+            if any(w in t for w in ["land","plot","terrain","agricultural"]): return "land"
+            if any(w in t for w in ["chalet","cabin","resort"]): return "chalet"
+            if any(w in t for w in ["building","multiple unit","multi-unit"]): return "villa"  # buildings = residential investment
+            if any(w in t for w in ["commercial","office","shop","store","warehouse","restaurant",
+                                     "clinic","showroom","factory","gym","hotel","salon","pharmacy",
+                                     "gas station","petrol","industrial","garage","depot","school",
+                                     "hospital","other commercial"]): return "commercial"
+
+        # Title-based fallback — handles nulls when OLX type param missing/unusual
         text = (title or "").lower()
-        if any(w in text for w in ["apartment","flat","شقة","appt","loft","studio"]): return "apartment"
-        if any(w in text for w in ["villa","house","townhouse","فيلا","chalet","duplex","triplex"]): return "villa"
+
+        # Commercial FIRST — many titles are explicit
+        if any(w in text for w in [
+            "pharmacy","clinic","hospital","school","hotel","gas station","petrol station",
+            "warehouse","factory","industrial","showroom","shop for sale","office for sale",
+            "office space","commercial space","restaurant for sale","salon","gym","depot",
+            "garage for sale","pharmacy for sale","studios for sale","studio for sale",  # studios = commercial investment
+            "13 studios","14 floors","16 furnished apartments",  # multi-unit commercial
+        ]): return "commercial"
+
+        # Arabic commercial
+        if any(w in text for w in ["محل","مستودع","مطعم","صيدلية","فندق","مكتب"]): return "commercial"
+
+        # Land — Arabic and English
+        if any(w in text for w in ["أرض","قطعة أرض","plot of land","land for sale","terrain"]): return "land"
+
+        # Residential
+        if any(w in text for w in ["apartment","flat","شقة","loft","penthouse"]): return "apartment"
+        if any(w in text for w in ["villa","house","فيلا","townhouse","duplex","triplex","chalet"]): return "villa"
         if any(w in text for w in ["land","plot","أرض","terrain"]): return "land"
-        if any(w in text for w in ["office","commercial","مكتب","warehouse"]): return "commercial"
-        if any(w in text for w in ["shop","store","محل"]): return "shop"
+        if any(w in text for w in ["office","commercial","مكتب","warehouse","shop","store","محل"]): return "commercial"
+
         return None
