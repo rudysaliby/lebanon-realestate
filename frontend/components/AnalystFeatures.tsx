@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Download, Bell, Presentation, Lock, Coins, Check, X } from 'lucide-react'
 import { useTheme, T } from '@/components/ThemeContext'
 import { getTier, canExportCSV } from '@/lib/useTier'
+import { deductTokens } from '@/lib/tokenActions'
 
 type Feature = {
   id: string
@@ -52,9 +53,10 @@ const FEATURES: Feature[] = [
   },
 ]
 
-function FeatureCard({ feature, user, tokens, t, theme, onUpgrade }: any) {
+function FeatureCard({ feature, user, tokens, t, theme, onUpgrade, onTokensChanged }: any) {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [error, setError] = useState('')
   const tier = getTier(user)
 
   const tierRank: Record<string, number> = { free: 0, explorer: 1, analyst: 2, admin: 99 }
@@ -64,11 +66,28 @@ function FeatureCard({ feature, user, tokens, t, theme, onUpgrade }: any) {
 
   const handleAction = async () => {
     if (isLocked) { onUpgrade(); return }
-    if (!canAfford) return
+    if (!canAfford) {
+      setError(`Need ${feature.tokenCost - tokens} more tokens`)
+      setTimeout(() => setError(''), 3000)
+      return
+    }
     setLoading(true)
+    setError('')
 
+    // Deduct tokens FIRST before performing the action
+    const result = await deductTokens(user.id, feature.tokenCost, feature.id)
+    if (!result.success) {
+      setError(result.error || 'Failed to deduct tokens')
+      setLoading(false)
+      setTimeout(() => setError(''), 3000)
+      return
+    }
+
+    // Refresh user data to reflect new token balance
+    if (onTokensChanged) await onTokensChanged()
+
+    // Now perform the actual feature action
     if (feature.id === 'export') {
-      // Trigger CSV download
       try {
         const res = await fetch('/api/listings?period=sale&type_group=residential')
         const data = await res.json()
@@ -83,12 +102,13 @@ function FeatureCard({ feature, user, tokens, t, theme, onUpgrade }: any) {
         a.href = url; a.download = 'iqari-listings.csv'; a.click()
         setSuccess(true)
         setTimeout(() => setSuccess(false), 3000)
-      } catch {}
+      } catch {
+        setError('Export failed')
+        setTimeout(() => setError(''), 3000)
+      }
     } else if (feature.id === 'alerts') {
-      // Open deal alerts modal — handled by parent
       onUpgrade('alerts')
     } else if (feature.id === 'report') {
-      // Call AI report API
       try {
         const res = await fetch('/api/market-report', { method: 'POST' })
         if (res.ok) {
@@ -98,8 +118,14 @@ function FeatureCard({ feature, user, tokens, t, theme, onUpgrade }: any) {
           a.href = url; a.download = 'iqari-market-report.pptx'; a.click()
           setSuccess(true)
           setTimeout(() => setSuccess(false), 3000)
+        } else {
+          setError('Report generation failed')
+          setTimeout(() => setError(''), 3000)
         }
-      } catch {}
+      } catch {
+        setError('Report generation failed')
+        setTimeout(() => setError(''), 3000)
+      }
     }
 
     setLoading(false)
@@ -155,6 +181,16 @@ function FeatureCard({ feature, user, tokens, t, theme, onUpgrade }: any) {
         {feature.description}
       </p>
 
+      {/* Error message */}
+      {error && (
+        <div style={{
+          fontSize: 11, color: '#f87171', background: 'rgba(248,113,113,0.1)',
+          border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6, padding: '5px 10px',
+        }}>
+          {error}
+        </div>
+      )}
+
       {/* Footer */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
@@ -193,8 +229,8 @@ function FeatureCard({ feature, user, tokens, t, theme, onUpgrade }: any) {
   )
 }
 
-export default function AnalystFeatures({ user, onUpgrade }: {
-  user: any, onUpgrade: (action?: string) => void
+export default function AnalystFeatures({ user, onUpgrade, onTokensChanged }: {
+  user: any, onUpgrade: (action?: string) => void, onTokensChanged?: () => Promise<any>
 }) {
   const { theme } = useTheme()
   const t = T[theme]
@@ -211,6 +247,7 @@ export default function AnalystFeatures({ user, onUpgrade }: {
           t={t}
           theme={theme}
           onUpgrade={onUpgrade}
+          onTokensChanged={onTokensChanged}
         />
       ))}
     </div>

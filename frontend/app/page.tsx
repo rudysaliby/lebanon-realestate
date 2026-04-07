@@ -39,7 +39,7 @@ const MODE_KEY = 'iqari-mode'
 function AppContent() {
   const { theme } = useTheme()
   const t = T[theme]
-  const { user } = useUser()
+  const { user, refreshUser } = useUser()
 
   // Persist mode in localStorage — survives auth redirects
   const [mode, setMode] = useState<Mode | null>(null)
@@ -227,6 +227,7 @@ function AppContent() {
                 areaData={areaData} mode={mode}
                 onClose={() => setAreaData(null)}
                 user={user} onSignIn={() => setShowAuth(true)}
+                onTokensChanged={refreshUser}
               />
             )}
 
@@ -278,7 +279,7 @@ function AppContent() {
             </div>
           </>
         ) : (
-          <InsightsTab mode={mode} user={user} onSignIn={() => setShowAuth(true)} />
+          <InsightsTab mode={mode} user={user} onSignIn={() => setShowAuth(true)} onTokensChanged={refreshUser} />
         )}
       </div>
 

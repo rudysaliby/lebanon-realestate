@@ -244,8 +244,8 @@ function DealFinder({ data, mode, user, onSignIn, t, theme }: any) {
   return null
 }
 
-export default function InsightsTab({ mode, user, onSignIn }: {
-  mode: Mode, user: any, onSignIn: () => void
+export default function InsightsTab({ mode, user, onSignIn, onTokensChanged }: {
+  mode: Mode, user: any, onSignIn: () => void, onTokensChanged?: () => Promise<any>
 }) {
   const { theme } = useTheme()
   const t = T[theme]
@@ -373,7 +373,7 @@ export default function InsightsTab({ mode, user, onSignIn }: {
           <AnalystFeatures user={user} onUpgrade={(action) => {
             if (!user) { onSignIn(); return }
             setShowPricing(true)
-          }} />
+          }} onTokensChanged={onTokensChanged} />
         </div>
       )}
     </>
@@ -507,7 +507,7 @@ export default function InsightsTab({ mode, user, onSignIn }: {
           <AnalystFeatures user={user} onUpgrade={(action) => {
             if (!user) { onSignIn(); return }
             setShowPricing(true)
-          }} />
+          }} onTokensChanged={onTokensChanged} />
         </div>
       )}
     </>

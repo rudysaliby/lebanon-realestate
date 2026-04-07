@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
+
+const ADMIN_EMAIL = 'rudysaliby@hotmail.com'
 
 export function useUser() {
   const [user, setUser] = useState<any>(null)
@@ -19,8 +21,9 @@ export function useUser() {
         .eq('id', authUser.id)
         .single()
 
-      // Auto-create profile for Google OAuth users who slipped through
+      // Auto-create profile for new users who don't have one yet
       if (!profile) {
+        const isAdmin = authUser.email === ADMIN_EMAIL
         const newProfile = {
           id: authUser.id,
           email: authUser.email,
@@ -28,8 +31,8 @@ export function useUser() {
             authUser.user_metadata?.full_name ||
             authUser.user_metadata?.name ||
             authUser.email?.split('@')[0],
-          tier: authUser.email === 'rudysaliby@hotmail.com' ? 'admin' : 'free',
-          tokens: authUser.email === 'rudysaliby@hotmail.com' ? 999999 : 0,
+          tier: isAdmin ? 'admin' : 'free',
+          tokens: isAdmin ? 999999 : 0,
         }
         await supabase.from('user_profiles').upsert(newProfile, { onConflict: 'id' })
 
@@ -44,19 +47,31 @@ export function useUser() {
         }
       }
 
+      // Use the database as the source of truth for tier and tokens
       return {
         ...authUser,
         user_metadata: {
           ...authUser.user_metadata,
-          tier:      profile?.tier      ?? 'free',
-          tokens:    profile?.tokens    ?? 0,
-          full_name: profile?.full_name ?? authUser.user_metadata?.full_name ?? authUser.user_metadata?.name,
+          tier:      profile.tier      ?? 'free',
+          tokens:    profile.tokens    ?? 0,
+          full_name: profile.full_name ?? authUser.user_metadata?.full_name ?? authUser.user_metadata?.name,
         }
       }
     } catch {
       return authUser
     }
   }
+
+  // Refresh user data from database — call this after token deduction
+  const refreshUser = useCallback(async () => {
+    const { data } = await supabase.auth.getSession()
+    if (data.session?.user) {
+      const enriched = await enrichWithProfile(data.session.user)
+      setUser(enriched)
+      return enriched
+    }
+    return null
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data }) => {
@@ -91,5 +106,5 @@ export function useUser() {
     return () => listener.subscription.unsubscribe()
   }, [])
 
-  return { user, loading }
+  return { user, loading, refreshUser }
 }

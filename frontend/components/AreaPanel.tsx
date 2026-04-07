@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { X, ChevronLeft, ChevronRight, ExternalLink, Lock, Crown, Coins } from 'lucide-react'
 import { useTheme, T } from '@/components/ThemeContext'
 import { getTier } from '@/lib/useTier'
+import { deductTokens } from '@/lib/tokenActions'
 import PricingPage from '@/components/PricingPage'
 import type { Mode } from '@/app/page'
 
@@ -140,14 +141,16 @@ const EXPLORER_FREE_CARDS = 6   // free without tokens
 const CARDS_PER_TOKEN_UNLOCK = 6 // unlock 6 more per token spend
 const TOKEN_COST = 1             // 1 token per unlock
 
-export default function AreaPanel({ areaData, mode, onClose, user, onSignIn }: {
-  areaData: any, mode: Mode, onClose: () => void, user: any, onSignIn: () => void
+export default function AreaPanel({ areaData, mode, onClose, user, onSignIn, onTokensChanged }: {
+  areaData: any, mode: Mode, onClose: () => void, user: any, onSignIn: () => void, onTokensChanged?: () => Promise<any>
 }) {
   const { theme } = useTheme()
   const t = T[theme]
   const [page, setPage] = useState(0)
   const [showPricing, setShowPricing] = useState(false)
   const [unlockedBatches, setUnlockedBatches] = useState(0)
+  const [unlocking, setUnlocking] = useState(false)
+  const [unlockError, setUnlockError] = useState('')
 
   const tier    = getTier(user)
   const isFree  = !user || tier === 'free'
@@ -184,10 +187,21 @@ export default function AreaPanel({ areaData, mode, onClose, user, onSignIn }: {
     } catch { alert('Contact us at hello@iqari.com to upgrade') }
   }
 
-  const handleUnlockMore = () => {
-    // In production this would deduct tokens via API
-    // For now just unlock the next batch
-    setUnlockedBatches(b => b + 1)
+  const handleUnlockMore = async () => {
+    if (!user || unlocking) return
+    setUnlocking(true)
+    setUnlockError('')
+
+    const result = await deductTokens(user.id, TOKEN_COST, 'unlock_listings')
+    if (result.success) {
+      setUnlockedBatches(b => b + 1)
+      if (onTokensChanged) await onTokensChanged()
+    } else {
+      setUnlockError(result.error || 'Not enough tokens')
+      setTimeout(() => setUnlockError(''), 3000)
+    }
+
+    setUnlocking(false)
   }
 
   return (
@@ -307,12 +321,17 @@ export default function AreaPanel({ areaData, mode, onClose, user, onSignIn }: {
                   <p style={{ fontSize:12, color:t.textMuted, marginBottom:14 }}>
                     Use {TOKEN_COST} token to unlock {CARDS_PER_TOKEN_UNLOCK} more listings
                   </p>
-                  <button onClick={handleUnlockMore} style={{
+                  {unlockError && (
+                    <p style={{ fontSize:11, color:'#f87171', marginBottom:8 }}>{unlockError}</p>
+                  )}
+                  <button onClick={handleUnlockMore} disabled={unlocking} style={{
                     background:t.accent, border:'none', borderRadius:8,
-                    padding:'8px 22px', fontSize:12, fontWeight:700, color:'#000', cursor:'pointer',
+                    padding:'8px 22px', fontSize:12, fontWeight:700, color:'#000',
+                    cursor: unlocking ? 'wait' : 'pointer',
                     display:'inline-flex', alignItems:'center', gap:6,
+                    opacity: unlocking ? 0.7 : 1,
                   }}>
-                    <Coins size={13}/> Unlock {CARDS_PER_TOKEN_UNLOCK} more · {TOKEN_COST} token
+                    <Coins size={13}/> {unlocking ? 'Unlocking...' : `Unlock ${CARDS_PER_TOKEN_UNLOCK} more · ${TOKEN_COST} token`}
                   </button>
                 </div>
               )}

@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { Bell, BellOff, Plus, Trash2, Coins, Lock } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
+import { deductTokens } from '@/lib/tokenActions'
 import type { Mode } from '@/app/page'
 
 const supabase = createClient(
@@ -23,8 +24,8 @@ type Alert = {
   created_at: string
 }
 
-export default function DealAlerts({ mode, user, onSignIn }: {
-  mode: Mode, user: any, onSignIn: () => void
+export default function DealAlerts({ mode, user, onSignIn, onTokensChanged }: {
+  mode: Mode, user: any, onSignIn: () => void, onTokensChanged?: () => Promise<any>
 }) {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [creating, setCreating] = useState(false)
@@ -61,6 +62,18 @@ export default function DealAlerts({ mode, user, onSignIn }: {
       return
     }
     setSaving(true)
+
+    // Deduct tokens first
+    const deductResult = await deductTokens(user.id, ALERT_TOKEN_COST, 'deal_alert')
+    if (!deductResult.success) {
+      setSuccess(deductResult.error || 'Failed to deduct tokens. Try again.')
+      setSaving(false)
+      return
+    }
+
+    // Refresh user data to reflect new balance
+    if (onTokensChanged) await onTokensChanged()
+
     const { error } = await supabase.from('deal_alerts').insert({
       user_id: user.id,
       area: area.trim(),

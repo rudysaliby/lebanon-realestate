@@ -52,3 +52,74 @@ GROUP BY area, property_type;
 -- Allow public read access (for frontend)
 ALTER TABLE listings ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public read" ON listings FOR SELECT USING (true);
+
+-- ============================================================
+-- User profiles — stores tier, tokens, and profile info
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_profiles (
+  id         UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email      TEXT,
+  full_name  TEXT,
+  tier       TEXT NOT NULL DEFAULT 'free',
+  tokens     INT  NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+-- Users can read their own profile
+CREATE POLICY "Users read own profile"  ON user_profiles FOR SELECT USING (auth.uid() = id);
+-- Users can update their own profile (tokens, etc.)
+CREATE POLICY "Users update own profile" ON user_profiles FOR UPDATE USING (auth.uid() = id);
+-- Allow inserts (for auto-creating profiles on first sign-in)
+CREATE POLICY "Users insert own profile" ON user_profiles FOR INSERT WITH CHECK (auth.uid() = id);
+-- Service role (used by webhooks & admin APIs) bypasses RLS automatically
+
+-- ============================================================
+-- Deal alerts — user-created price alerts per area
+-- ============================================================
+CREATE TABLE IF NOT EXISTS deal_alerts (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  area          TEXT NOT NULL,
+  region        TEXT,
+  max_price     NUMERIC NOT NULL,
+  property_type TEXT,
+  price_period  TEXT,
+  active        BOOLEAN DEFAULT true,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deal_alerts_user   ON deal_alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_deal_alerts_active ON deal_alerts(active);
+
+ALTER TABLE deal_alerts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own alerts"   ON deal_alerts FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users insert own alerts" ON deal_alerts FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users update own alerts" ON deal_alerts FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "Users delete own alerts" ON deal_alerts FOR DELETE USING (auth.uid() = user_id);
+
+-- ============================================================
+-- Area benchmarks — admin-set manual price data per area
+-- ============================================================
+CREATE TABLE IF NOT EXISTS area_benchmarks (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  area          TEXT NOT NULL,
+  region        TEXT,
+  type_group    TEXT NOT NULL DEFAULT 'residential',
+  price_period  TEXT NOT NULL DEFAULT 'sale',
+  median_ppsqm  NUMERIC NOT NULL,
+  source        TEXT DEFAULT 'manual',
+  notes         TEXT,
+  updated_by    UUID REFERENCES auth.users(id),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(area, type_group, price_period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmarks_area ON area_benchmarks(area);
+
+ALTER TABLE area_benchmarks ENABLE ROW LEVEL SECURITY;
+-- Anyone can read benchmarks (used in valuation)
+CREATE POLICY "Public read benchmarks" ON area_benchmarks FOR SELECT USING (true);
+-- Only admin (via service role) can insert/update/delete — handled server-side

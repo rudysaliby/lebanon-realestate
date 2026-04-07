@@ -1,9 +1,10 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { X, Save, Plus, Trash2, RefreshCw, Users, MapPin, BarChart2 } from 'lucide-react'
+import { X, Save, Plus, Trash2, RefreshCw, Users, MapPin, BarChart2, Coins } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 import { useTheme, T } from '@/components/ThemeContext'
 import IqariLogo from '@/components/IqariLogo'
+import { adminUpdateTokens } from '@/lib/tokenActions'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -39,6 +40,13 @@ export default function AdminPanel({ onClose, user }: {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | typeof TYPE_GROUPS[number]>('all')
+
+  // Token management state
+  const [tokenUserId, setTokenUserId] = useState<string | null>(null)
+  const [tokenAmount, setTokenAmount] = useState('')
+  const [tokenAction, setTokenAction] = useState<'add' | 'set' | 'remove'>('add')
+  const [tokenSaving, setTokenSaving] = useState(false)
+  const [tokenMsg, setTokenMsg] = useState('')
 
   // New benchmark form
   const [newBM, setNewBM] = useState<Partial<Benchmark>>({
@@ -160,6 +168,28 @@ export default function AdminPanel({ onClose, user }: {
     fetchUsers()
   }
 
+  const handleTokenUpdate = async (targetUserId: string) => {
+    const amt = parseInt(tokenAmount)
+    if (!amt || amt <= 0) {
+      setTokenMsg('Enter a valid amount')
+      return
+    }
+    setTokenSaving(true)
+    setTokenMsg('')
+
+    const result = await adminUpdateTokens(user.id, targetUserId, amt, tokenAction)
+    if (result.success) {
+      setTokenMsg(`Done! New balance: ${result.newBalance} tokens`)
+      setTokenAmount('')
+      setTokenUserId(null)
+      fetchUsers() // refresh the user list
+    } else {
+      setTokenMsg(result.error || 'Failed')
+    }
+    setTokenSaving(false)
+    setTimeout(() => setTokenMsg(''), 4000)
+  }
+
   const addBenchmark = async () => {
     if (!newBM.area || !newBM.median_ppsqm) return
     await saveBenchmark(newBM as Benchmark)
@@ -238,7 +268,7 @@ export default function AdminPanel({ onClose, user }: {
         }}>
           {[
             { id: 'benchmarks' as AdminTab, label: 'Price Benchmarks', icon: <MapPin size={13}/> },
-            { id: 'users'      as AdminTab, label: 'Users',            icon: <Users size={13}/> },
+            { id: 'users'      as AdminTab, label: 'Users & Tokens',   icon: <Users size={13}/> },
             { id: 'stats'      as AdminTab, label: 'Stats',            icon: <BarChart2 size={13}/> },
           ].map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
@@ -443,24 +473,36 @@ export default function AdminPanel({ onClose, user }: {
             </>
           )}
 
-          {/* USERS TAB */}
+          {/* USERS & TOKENS TAB */}
           {activeTab === 'users' && (
             <>
               <div style={{ marginBottom: 16 }}>
                 <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 15, fontWeight: 700, color: t.text, margin: '0 0 4px' }}>
-                  User Management
+                  User Management & Tokens
                 </h3>
                 <p style={{ fontSize: 12, color: t.textMuted, margin: 0 }}>
-                  {users.length} users registered
+                  {users.length} users registered. Click the token icon to add/set/remove tokens.
                 </p>
               </div>
+
+              {/* Token update success/error message */}
+              {tokenMsg && (
+                <div style={{
+                  marginBottom: 12, padding: '8px 14px', borderRadius: 8, fontSize: 12,
+                  background: tokenMsg.startsWith('Done') ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+                  border: `1px solid ${tokenMsg.startsWith('Done') ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)'}`,
+                  color: tokenMsg.startsWith('Done') ? '#4ade80' : '#f87171',
+                }}>
+                  {tokenMsg}
+                </div>
+              )}
 
               {loading ? (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: t.textMuted }}>Loading...</div>
               ) : (
                 <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, overflow: 'hidden' }}>
                   <div style={{
-                    display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr',
+                    display: 'grid', gridTemplateColumns: '2fr 1fr 1.2fr 1fr 0.8fr',
                     padding: '10px 14px', background: t.bgCard,
                     borderBottom: `1px solid ${t.border}`,
                     fontSize: 11, fontWeight: 700, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em',
@@ -469,38 +511,112 @@ export default function AdminPanel({ onClose, user }: {
                     <span>Tier</span>
                     <span>Tokens</span>
                     <span>Joined</span>
+                    <span>Actions</span>
                   </div>
                   {users.map((u, i) => {
                     const TIER_COLORS: Record<string, string> = {
                       free: '#6b7280', explorer: '#4ade80', analyst: '#a78bfa', admin: '#f59e0b'
                     }
+                    const isEditing = tokenUserId === u.id
                     return (
-                      <div key={u.id} style={{
-                        display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr',
-                        padding: '10px 14px', alignItems: 'center',
-                        borderBottom: i < users.length-1 ? `1px solid ${t.border}` : 'none',
-                        background: u.email === 'rudysaliby@hotmail.com'
-                          ? 'rgba(245,158,11,0.04)' : 'transparent',
-                      }}>
-                        <span style={{ fontSize: 12, color: t.text }}>{u.email}</span>
-                        <div>
-                          <select
-                            value={u.tier || 'free'}
-                            onChange={e => updateUserTier(u.id, e.target.value)}
-                            style={{
-                              background: t.bgCard, border: `1px solid ${t.border}`,
-                              borderRadius: 5, padding: '3px 6px', fontSize: 11,
-                              color: TIER_COLORS[u.tier || 'free'], fontWeight: 600, cursor: 'pointer',
-                            }}>
-                            {['free','explorer','analyst','admin'].map(tier => (
-                              <option key={tier} value={tier}>{tier}</option>
-                            ))}
-                          </select>
+                      <div key={u.id}>
+                        <div style={{
+                          display: 'grid', gridTemplateColumns: '2fr 1fr 1.2fr 1fr 0.8fr',
+                          padding: '10px 14px', alignItems: 'center',
+                          borderBottom: (i < users.length - 1 && !isEditing) ? `1px solid ${t.border}` : 'none',
+                          background: u.email === 'rudysaliby@hotmail.com'
+                            ? 'rgba(245,158,11,0.04)' : 'transparent',
+                        }}>
+                          <span style={{ fontSize: 12, color: t.text }}>{u.email}</span>
+                          <div>
+                            <select
+                              value={u.tier || 'free'}
+                              onChange={e => updateUserTier(u.id, e.target.value)}
+                              style={{
+                                background: t.bgCard, border: `1px solid ${t.border}`,
+                                borderRadius: 5, padding: '3px 6px', fontSize: 11,
+                                color: TIER_COLORS[u.tier || 'free'], fontWeight: 600, cursor: 'pointer',
+                              }}>
+                              {['free','explorer','analyst','admin'].map(tier => (
+                                <option key={tier} value={tier}>{tier}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <span style={{ fontSize: 12, color: t.text, fontWeight: 600 }}>
+                            {(u.tokens || 0).toLocaleString()}
+                          </span>
+                          <span style={{ fontSize: 11, color: t.textMuted }}>
+                            {u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}
+                          </span>
+                          <div>
+                            <button
+                              onClick={() => {
+                                setTokenUserId(isEditing ? null : u.id)
+                                setTokenAmount('')
+                                setTokenAction('add')
+                              }}
+                              style={{
+                                background: isEditing ? '#f59e0b' : 'rgba(245,158,11,0.1)',
+                                border: `1px solid ${isEditing ? '#f59e0b' : 'rgba(245,158,11,0.25)'}`,
+                                borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                fontSize: 11, fontWeight: 600,
+                                color: isEditing ? '#000' : '#f59e0b',
+                              }}
+                            >
+                              <Coins size={11}/> {isEditing ? 'Cancel' : 'Tokens'}
+                            </button>
+                          </div>
                         </div>
-                        <span style={{ fontSize: 12, color: t.textMuted }}>{u.tokens || 0}</span>
-                        <span style={{ fontSize: 11, color: t.textMuted }}>
-                          {u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}
-                        </span>
+
+                        {/* Inline token edit form */}
+                        {isEditing && (
+                          <div style={{
+                            padding: '12px 14px 14px', borderBottom: `1px solid ${t.border}`,
+                            background: 'rgba(245,158,11,0.03)',
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <span style={{ fontSize: 11, color: t.textMuted, whiteSpace: 'nowrap' }}>
+                                Manage tokens for <strong style={{ color: t.text }}>{u.email}</strong>
+                              </span>
+                              <select
+                                value={tokenAction}
+                                onChange={e => setTokenAction(e.target.value as any)}
+                                style={{
+                                  background: t.bgCard, border: `1px solid ${t.border}`,
+                                  borderRadius: 5, padding: '4px 8px', fontSize: 11, color: t.text,
+                                }}
+                              >
+                                <option value="add">Add</option>
+                                <option value="set">Set to</option>
+                                <option value="remove">Remove</option>
+                              </select>
+                              <input
+                                type="number"
+                                value={tokenAmount}
+                                onChange={e => setTokenAmount(e.target.value)}
+                                placeholder="Amount"
+                                style={{
+                                  background: t.bgCard, border: `1px solid ${t.border}`,
+                                  borderRadius: 5, padding: '4px 8px', fontSize: 12, color: t.text,
+                                  outline: 'none', width: 90,
+                                }}
+                              />
+                              <button
+                                onClick={() => handleTokenUpdate(u.id)}
+                                disabled={tokenSaving || !tokenAmount}
+                                style={{
+                                  background: '#f59e0b', border: 'none', borderRadius: 6,
+                                  padding: '5px 14px', fontSize: 11, fontWeight: 700,
+                                  color: '#000', cursor: tokenSaving ? 'wait' : 'pointer',
+                                  opacity: tokenSaving || !tokenAmount ? 0.6 : 1,
+                                }}
+                              >
+                                {tokenSaving ? '...' : 'Apply'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   })}
