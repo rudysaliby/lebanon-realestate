@@ -16,7 +16,7 @@ export default function AIInsight({ listing }: { listing: any }) {
   const analyze = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/ai-insight', {
+      const res = await fetch('/api/ai-insights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(listing),

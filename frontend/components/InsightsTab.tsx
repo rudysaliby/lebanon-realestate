@@ -366,16 +366,6 @@ export default function InsightsTab({ mode, user, onSignIn, onTokensChanged }: {
         </div>
       </div>
       {showPricing && <PricingPage onClose={() => setShowPricing(false)} currentTier={tier} user={user} onUpgrade={handleUpgrade} />}
-      {activeView === 'features' && !loading && (
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', background: t.bg, padding: '24px' }}>
-          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:20, fontWeight:700, color:t.text, marginBottom:6 }}>Tools & Exports</h2>
-          <p style={{ fontSize:12, color:t.textMuted, marginBottom:20 }}>Use tokens to export data, generate reports, and set market alerts.</p>
-          <AnalystFeatures user={user} onUpgrade={(action) => {
-            if (!user) { onSignIn(); return }
-            setShowPricing(true)
-          }} onTokensChanged={onTokensChanged} />
-        </div>
-      )}
     </>
   )
 
@@ -430,6 +420,13 @@ export default function InsightsTab({ mode, user, onSignIn, onTokensChanged }: {
             <div style={{ textAlign:'center', padding:'60px 0', color:t.textMuted }}>Computing market data...</div>
           ) : data.length === 0 ? (
             <div style={{ textAlign:'center', padding:'60px 0', color:t.textMuted }}>No areas with 5+ listings for this selection.</div>
+          ) : activeView === 'features' ? (
+            <div>
+              <AnalystFeatures user={user} onUpgrade={(action) => {
+                if (!user) { onSignIn(); return }
+                setShowPricing(true)
+              }} onTokensChanged={onTokensChanged} />
+            </div>
           ) : activeView === 'market' ? (
             <>
               {/* Summary */}
@@ -500,16 +497,6 @@ export default function InsightsTab({ mode, user, onSignIn, onTokensChanged }: {
       </div>
 
       {showPricing && <PricingPage onClose={() => setShowPricing(false)} currentTier={tier} user={user} onUpgrade={handleUpgrade} />}
-      {activeView === 'features' && !loading && (
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', background: t.bg, padding: '24px' }}>
-          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:20, fontWeight:700, color:t.text, marginBottom:6 }}>Tools & Exports</h2>
-          <p style={{ fontSize:12, color:t.textMuted, marginBottom:20 }}>Use tokens to export data, generate reports, and set market alerts.</p>
-          <AnalystFeatures user={user} onUpgrade={(action) => {
-            if (!user) { onSignIn(); return }
-            setShowPricing(true)
-          }} onTokensChanged={onTokensChanged} />
-        </div>
-      )}
     </>
   )
 }

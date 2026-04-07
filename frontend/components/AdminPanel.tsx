@@ -147,7 +147,7 @@ export default function AdminPanel({ onClose, user }: {
         source: 'manual',
         updated_at: new Date().toISOString(),
         updated_by: user.id,
-      }, { onConflict: 'area,type_group' })
+      }, { onConflict: 'area,type_group,price_period' })
 
     if (!error) {
       await fetchBenchmarks()

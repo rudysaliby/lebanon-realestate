@@ -112,10 +112,13 @@ function FeatureCard({ feature, user, tokens, t, theme, onUpgrade, onTokensChang
       try {
         const res = await fetch('/api/market-report', { method: 'POST' })
         if (res.ok) {
+          const contentType = res.headers.get('content-type') || ''
           const blob = await res.blob()
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')
-          a.href = url; a.download = 'iqari-market-report.pptx'; a.click()
+          a.href = url
+          a.download = contentType.includes('html') ? 'iqari-market-report.html' : 'iqari-market-report.csv'
+          a.click()
           setSuccess(true)
           setTimeout(() => setSuccess(false), 3000)
         } else {
